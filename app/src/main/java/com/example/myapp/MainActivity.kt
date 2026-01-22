@@ -58,6 +58,15 @@ const val CAT_COLLISION_SEPARATION_TOUCHING = 1.25f     // Separation multiplier
 // Cat sprite animation
 const val CAT_ANIMATION_FRAME_DELAY_MS = 150L  // Delay between animation frames (150ms = ~6.7 fps for smooth sprite animation)
 
+// Cat sprite speed
+const val CAT_BASE_SPEED = 3f  // Base movement speed in pixels per frame
+const val CAT_SPEED_MULTIPLIER = 3.0f  // Speed multiplier for cat (can be adjusted for different speeds)
+
+// Cat diagonal movement detection
+const val CAT_DIAGONAL_RATIO_MIN = 0.3f  // Minimum ratio for diagonal detection (was 0.5f)
+const val CAT_DIAGONAL_RATIO_MAX = 3.0f  // Maximum ratio for diagonal detection (was 2.0f)
+const val CAT_DIAGONAL_MIN_VELOCITY = 0.1f  // Minimum velocity for both X and Y to be considered diagonal
+
 // Flag to enable/disable Binance and Coinbase logcat logs
 const val ENABLE_EXCHANGE_LOGS = false
 
@@ -377,8 +386,8 @@ fun PriceDisplayScreen() {
             
             if (catCount < MAX_CAT_SPRITES) {
                 val catState = SpriteState()
-                val baseSpeed = 3f
-                val catSpeedMultiplier = 1.0f // Fixed speed for cat
+                val baseSpeed = CAT_BASE_SPEED
+                val catSpeedMultiplier = CAT_SPEED_MULTIPLIER
                 val effectiveSpeed = baseSpeed * catSpeedMultiplier
                 
                 // Position at center of screen
@@ -441,10 +450,10 @@ fun PriceDisplayScreen() {
                     }
                 }
                 SpriteType.CAT -> {
-                    // Cat uses fixed speed multiplier of 1.0f
+                    // Cat uses fixed speed multiplier
                     val index = sprites.indexOf(sprite)
                     if (index >= 0) {
-                        sprites[index] = sprite.copy(speedMultiplier = 1.0f)
+                        sprites[index] = sprite.copy(speedMultiplier = CAT_SPEED_MULTIPLIER)
                     }
                 }
             }
@@ -528,14 +537,14 @@ fun PriceDisplayScreen() {
         val count = sprites.count { it.spriteType == cloneType }
         if (count < MAX_BITCOIN_SPRITES_PER_TYPE) { // Allows up to MAX_BITCOIN_SPRITES_PER_TYPE per type
             val cloneState = SpriteState()
-            val baseSpeed = 3f
+            val baseSpeed = if (cloneType == SpriteType.CAT) CAT_BASE_SPEED else 3f
             
             // Determine speed multiplier based on clone type
             val cloneSpeedMultiplier = when (cloneType) {
                 SpriteType.BITCOIN_ORANGE -> binanceSpeedMultiplier
                 SpriteType.BITCOIN -> coinbaseSpeedMultiplier
                 SpriteType.FIAT_USD -> 1.0f // Fixed speed for Fiat USD
-                SpriteType.CAT -> 1.0f // Fixed speed for Cat
+                SpriteType.CAT -> CAT_SPEED_MULTIPLIER
             }
             val effectiveSpeed = baseSpeed * cloneSpeedMultiplier
             
@@ -1485,7 +1494,7 @@ fun BouncingSprite(
         
         // Cat sprite animation frame tracking
         var catAnimationFrame by remember { mutableStateOf(0) }
-        var catDirection by remember { mutableStateOf("down") } // Tracks movement direction ("up", "down", "left", or "right")
+        var catDirection by remember { mutableStateOf("down") } // Tracks movement direction ("up", "down", "left", "right", "down_left", "down_right", etc.)
         
         // Animate cat sprite frames when moving
         LaunchedEffect(spriteData.spriteType == SpriteType.CAT, spriteState.velocity) {
@@ -1497,11 +1506,41 @@ fun BouncingSprite(
                 val isMoving = velocityMagnitude > 0.1f
                 
                 // Determine direction based on velocity
-                // Prioritize horizontal movement over vertical movement
                 val absX = kotlin.math.abs(spriteState.velocity.x)
                 val absY = kotlin.math.abs(spriteState.velocity.y)
                 
-                if (absX > absY) {
+                // Check if movement is diagonal (both X and Y velocities are significant)
+                val ratio = if (absY > 0f) absX / absY else 0f
+                val isDiagonal = ratio >= CAT_DIAGONAL_RATIO_MIN && 
+                                 ratio <= CAT_DIAGONAL_RATIO_MAX && 
+                                 absX > CAT_DIAGONAL_MIN_VELOCITY && 
+                                 absY > CAT_DIAGONAL_MIN_VELOCITY
+                
+                if (isDiagonal) {
+                    // Diagonal movement detected
+                    if (spriteState.velocity.x < 0 && spriteState.velocity.y > 0) {
+                        // Moving down-left (negative X, positive Y)
+                        catDirection = "down_left"
+                    } else if (spriteState.velocity.x > 0 && spriteState.velocity.y > 0) {
+                        // Moving down-right (positive X, positive Y)
+                        catDirection = "down_right"
+                    } else {
+                        // Other diagonals not yet implemented, fall back to horizontal/vertical
+                        if (absX > absY) {
+                            if (spriteState.velocity.x < 0) {
+                                catDirection = "left"
+                            } else {
+                                catDirection = "right"
+                            }
+                        } else {
+                            if (spriteState.velocity.y < 0) {
+                                catDirection = "up"
+                            } else {
+                                catDirection = "down"
+                            }
+                        }
+                    }
+                } else if (absX > absY) {
                     // Horizontal movement is dominant
                     if (spriteState.velocity.x < 0) {
                         catDirection = "left"
@@ -1552,6 +1591,16 @@ fun BouncingSprite(
                     0 -> R.drawable.e_cat_right_1
                     1 -> R.drawable.e_cat_right_2
                     else -> R.drawable.e_cat_right_1
+                }
+                "down_left" -> when (catAnimationFrame) {
+                    0 -> R.drawable.e_cat_down_left_1
+                    1 -> R.drawable.e_cat_down_left_2
+                    else -> R.drawable.e_cat_down_left_1
+                }
+                "down_right" -> when (catAnimationFrame) {
+                    0 -> R.drawable.e_cat_down_right_1
+                    1 -> R.drawable.e_cat_down_right_2
+                    else -> R.drawable.e_cat_down_right_1
                 }
                 else -> R.drawable.e_cat_down_1 // Default to down frames
             }
