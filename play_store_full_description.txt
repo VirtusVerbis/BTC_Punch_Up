@@ -1,0 +1,24 @@
+**BTC Punch Up turns live Bitcoin markets into a boxing match.**
+
+Watch Satoshi take on the Lizard in the ring. Every punch, block, and dodge is driven by real-time price and order-book data from Binance and Coinbase. No account, no ads, no in-app purchases—just a live view of BTC action, visualized as a fight.
+
+**How it works**
+
+- **Satoshi (hero)** fights with buy-side pressure: when Binance or Coinbase buy volume leads, he throws punches. His left hand follows Binance, his right hand Coinbase. The stronger the buy volume, the heavier the punch—from Jab to Uppercut.
+- **Lizard (villain)** fights with sell-side pressure: when sell volume leads, he attacks; when buy volume leads, he blocks or dodges. Same logic, mirrored.
+- **Damage and KO** — Successful hits fill a damage bar. When it hits 100, the opponent goes down: Fall, Knocked Down, then Rise. Then the bar resets and the fight continues.
+
+**What you see**
+
+- Live BTC price and buy/sell volume for Binance and Coinbase on the overlay.
+- Damage bars and Offense/Defense mode per side.
+- Bitcoin block height (shown as "Time") and a timer showing how long since the last block.
+- Optional candle chart, ring, audience, and a cat that crosses the screen.
+
+**Data and privacy**
+
+- The app uses public APIs only (Binance, Coinbase, Mempool.space). No account or personal data is collected or sent. No analytics, no ads, no tracking.
+
+**For fun and context**
+
+- BTC Punch Up is for entertainment and market context only. It is not financial advice. Use it to see how buy and sell pressure move in real time—and to watch Satoshi and the Lizard throw hands.
