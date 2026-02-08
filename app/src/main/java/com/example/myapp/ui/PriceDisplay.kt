@@ -1,12 +1,15 @@
 package com.example.myapp.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
@@ -37,9 +40,13 @@ fun PriceDisplay(
     sellVolume: Double?,
     maxVolume: Double,
     volumeAnimating: Boolean,
+    modeLabel: String,
     modifier: Modifier = Modifier,
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
-    pulseDirection: PulseDirection = PulseDirection.LEFT_TO_RIGHT
+    pulseDirection: PulseDirection = PulseDirection.LEFT_TO_RIGHT,
+    damagePoints: Int = 0,
+    showDamageBar: Boolean = false,
+    maxDamagePoints: Int = 100
 ) {
     val screenHeightDp = LocalConfiguration.current.screenHeightDp
     val priceFontSize = (screenHeightDp / 20 * 0.4).sp  // 60% smaller (40% of original)
@@ -124,5 +131,46 @@ fun PriceDisplay(
             barWidth = priceTextWidth,
             modifier = Modifier
         )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Offense / Defense label
+        Text(
+            text = modeLabel,
+            fontSize = labelFontSize,
+            color = if (modeLabel == "Defense") Color(0xFFFFC107) else Color(0xFF4CAF50)
+        )
+
+        // Damage bar (yellow, double thickness) - 0 to maxDamagePoints
+        if (showDamageBar) {
+            Spacer(modifier = Modifier.height(4.dp))
+            val damageBarHeight = barHeight * 2
+            val damageProgress = (damagePoints / maxDamagePoints.toFloat()).coerceIn(0f, 1f)
+            Box(
+                modifier = Modifier
+                    .width(priceTextWidth)
+                    .height(damageBarHeight)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(priceTextWidth)
+                        .height(damageBarHeight)
+                        .background(Color.Gray.copy(alpha = 0.3f))
+                )
+                Box(
+                    modifier = Modifier
+                        .width(priceTextWidth * damageProgress)
+                        .height(damageBarHeight)
+                        .background(Color(0xFFFFEB3B))
+                        .align(
+                            when (horizontalAlignment) {
+                                Alignment.Start -> Alignment.CenterStart
+                                Alignment.End -> Alignment.CenterEnd
+                                else -> Alignment.CenterStart
+                            }
+                        )
+                )
+            }
+        }
     }
 }

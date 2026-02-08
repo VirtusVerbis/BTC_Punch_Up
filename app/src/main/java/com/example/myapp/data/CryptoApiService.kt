@@ -1,12 +1,20 @@
 package com.example.myapp.data
 
+import okhttp3.ResponseBody
 import retrofit2.http.GET
 import retrofit2.http.Query
 
 interface CryptoApiService {
     @GET("api/v3/ticker/price?symbol=BTCUSDT")
     suspend fun getBinancePrice(): BinancePriceResponse
-    
+
+    @GET("api/v3/klines")
+    suspend fun getBinanceKlines(
+        @Query("symbol") symbol: String = "BTCUSDT",
+        @Query("interval") interval: String = "1m",
+        @Query("limit") limit: Int = 60
+    ): ResponseBody
+
     @GET("api/v3/trades")
     suspend fun getBinanceTrades(
         @Query("symbol") symbol: String = "BTCUSDT",

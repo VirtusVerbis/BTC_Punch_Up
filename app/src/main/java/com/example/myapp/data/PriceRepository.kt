@@ -1,6 +1,10 @@
 package com.example.myapp.data
 
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import com.google.gson.Gson
@@ -26,6 +30,21 @@ class PriceRepository {
     private val binanceApi = binanceRetrofit.create(CryptoApiService::class.java)
     private val coinbaseApi = coinbaseRetrofit.create(CryptoApiService::class.java)
     private val coinbaseExchangeApi = coinbaseExchangeRetrofit.create(CryptoApiService::class.java)
+    
+    private val okHttp = OkHttpClient()
+    
+    /** Fetches current Bitcoin block tip height from Mempool.space (plain text). */
+    suspend fun getBlockTipHeight(): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().url("https://mempool.space/api/blocks/tip/height").build()
+            val response = okHttp.newCall(request).execute()
+            if (!response.isSuccessful) return@withContext Result.failure(Exception("HTTP ${response.code}"))
+            val body = response.body?.string()?.trim() ?: return@withContext Result.failure(Exception("Empty response"))
+            Result.success(body.toInt())
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
     
     suspend fun getBinancePrice(): Result<Double> {
         return try {

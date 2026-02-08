@@ -5,16 +5,24 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -23,126 +31,875 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.material3.Text
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.toSize
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.ui.input.pointer.pointerInput
 import com.example.myapp.data.PriceRepository
+import com.example.myapp.data.WebSocketRepository
+import com.example.myapp.ui.BtcCandleChart
 import com.example.myapp.ui.PriceDisplay
 import com.example.myapp.ui.PulseDirection
 import com.example.myapp.ui.theme.MyAppTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import androidx.compose.runtime.rememberCoroutineScope
-import java.util.Random
-
-// Cooldown timer for clone spawning (3 seconds)
-const val CLONE_SPAWN_COOLDOWN_MS = 3000L
-
-// Cooldown timer for Fiat USD shrink (3 seconds)
-const val FIAT_SHRINK_COOLDOWN_MS = 3000L
-
-// Max sprite counts
-const val MAX_BITCOIN_SPRITES_PER_TYPE = 5  // Allows up to 5 per type (2 original + 3 clones = 10 total)
-const val MAX_FIAT_USD_SPRITES = 10         // Maximum number of Fiat USD sprites that can exist
-const val MAX_CAT_SPRITES = 1               // Maximum number of cat sprites that can exist
-
-// Cat collision separation multipliers
-const val CAT_COLLISION_SEPARATION_OVERLAPPING = 1.25f  // Separation multiplier when sprites are overlapping with cat
-const val CAT_COLLISION_SEPARATION_TOUCHING = 1.25f     // Separation multiplier when sprites are just touching cat
-
-// Cat sprite animation
-const val CAT_ANIMATION_FRAME_DELAY_MS = 150L  // Delay between animation frames (150ms = ~6.7 fps for smooth sprite animation)
-
-// Cat sprite speed
-const val CAT_BASE_SPEED = 3f  // Base movement speed in pixels per frame
-const val CAT_SPEED_MULTIPLIER = 3.0f  // Speed multiplier for cat (can be adjusted for different speeds)
-
-// Cat diagonal movement detection
-const val CAT_DIAGONAL_RATIO_MIN = 0.3f  // Minimum ratio for diagonal detection (was 0.5f)
-const val CAT_DIAGONAL_RATIO_MAX = 3.0f  // Maximum ratio for diagonal detection (was 2.0f)
-const val CAT_DIAGONAL_MIN_VELOCITY = 0.1f  // Minimum velocity for both X and Y to be considered diagonal
+import androidx.compose.runtime.collectAsState
+import java.io.File
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 
 // Flag to enable/disable Binance and Coinbase logcat logs
 const val ENABLE_EXCHANGE_LOGS = false
 
-// Flag to enable/disable drag gesture logcat logs
-const val ENABLE_DRAG_LOGS = false
+// Flag to enable/disable punch sequence logcat logs
+const val ENABLE_PUNCH_LOGS = false  // Set to true to debug punch triggers
 
-// Shared state for sprite position and velocity
-class SpriteState {
-    var position: Offset = Offset.Zero
-    var velocity: Offset = Offset.Zero
-    var userAppliedVelocity: Offset = Offset.Zero // Velocity added by user fling
-    var userInteractionStartTime: Long = 0L // When user interaction started (for 5-second timer)
-}
+// Flag to enable/disable defense/block/dodge animation logcat logs
+const val ENABLE_BLOCKING_LOGS = false  // Set to true to debug dodge/block triggers
 
-// Sprite type enum
-enum class SpriteType {
-    BITCOIN_ORANGE,  // bitcoin_orange_sprite (Binance-controlled)
-    BITCOIN,         // bitcoin_sprite (Coinbase-controlled)
-    FIAT_USD,        // fiat_usd.png (spawns when sell volume >= 50%)
-    CAT              // e_cat.png (roams around, unaffected by collisions)
-}
+// Flag to enable LizardDebug / agentLog output (logcat and debug file)
+const val ENABLE_LIZARD_LOGS = false  // Set to true to enable LizardDebug / agentLog output
 
-// Sprite data structure
-data class SpriteData(
-    val spriteState: SpriteState,
-    val spriteResourceId: Int,
-    val speedMultiplier: Float,
-    val isOriginal: Boolean,
-    val spriteType: SpriteType,
-    val lastCloneSpawnTime: Long = 0L, // Timestamp when sprite last triggered/spawned a clone
-    val sizeScale: Float = 1.0f, // Current size multiplier (default 1.0 = 100%)
-    val bitcoinCollisionCount: Int = 0, // Number of Bitcoin collisions (0-4, for Fiat USD)
-    val lastShrinkCooldownTime: Long = 0L // Timestamp for shrink cooldown (for Fiat USD)
+// Toggle dodging (defense animations) for testing - false = no block/dodge animations
+const val ENABLE_DODGING = true
+
+// Toggle punching for testing - false = no punch animations (Satoshi idle or defense only)
+const val ENABLE_PUNCHING = true
+
+// Splash screen: display duration and fade-out animation
+const val SPLASH_DISPLAY_MS = 2500L   // 3 seconds default; skip on first touch
+const val SPLASH_FADE_OUT_MS = 300    // fade-out duration in ms
+
+// Satoshi sprite scale multiplier (adjustable for testing)
+const val SATOSHI_SCALE = 3.5f  // 1.0 = 100% size, 1.5 = 150% size, 0.5 = 50% size
+
+// Satoshi Y position factor (adjustable for testing)
+// 0.0 = top of screen, 0.5 = center, 1.0 = bottom of screen
+const val SATOSHI_Y_POSITION = 0.70f // 0.65f
+
+// Satoshi X position factor (adjustable for testing)
+// 0.0 = left edge, 0.5 = center, 1.0 = right edge
+const val SATOSHI_X_POSITION = 0.6f //0.525f
+
+// Lizard (villain) sprite constants
+const val LIZARD_SCALE = 5f
+const val LIZARD_Y_POSITION = 0.64f  // 0.57f
+const val LIZARD_X_POSITION =  0.9f //0.765f
+
+// Ring rotation (bg0): test mode and direction
+const val TEST_RING_ROTATION = true  // true = use timer; false = trigger on Bitcoin block height update
+enum class RingRotateDirection { Left, Right, Random }
+val RING_ROTATE_DIRECTION = RingRotateDirection.Random  // Left, Right, or Random (default)
+const val RING_ROTATE_FREQUENCY_MS =  2*60*1_000L  // When TEST_RING_ROTATION: rotate every N ms (e.g. 10 seconds)
+const val RING_ROTATION_FRAME_DELAY_MS = 8000L //80L  // ms per ring rotation frame; lower = faster, higher = slower
+
+// Cat walk across screen (fg3, in front of Satoshi)
+const val SPAWN_CAT = true  // true = spawn on timer; false = spawn on block height update
+const val CAT_SPAWN_Y_FACTOR = 0.965f  // Spawn Y = screenHeight * this (0.80 = near bottom, below Satoshi)
+const val CAT_SPEED = 8f  // Pixels per frame (movement per animation tick; ~100 px/s at 80 ms/frame)
+const val CAT_SPAWN_INTERVAL_MS =   15*60*1_000L  //15_000L  // When SPAWN_CAT true: spawn interval (ms)
+const val CAT_SIZE_DP = 64f  // Cat sprite size (dp)
+const val CAT_OFFSCREEN_MARGIN_PX = 50f  // Extra pixels beyond screen edge for spawn/despawn
+private val E_CAT_LEFT_FRAMES = listOf(R.drawable.e_cat_left_1, R.drawable.e_cat_left_2)   // walks right-to-left
+private val E_CAT_RIGHT_FRAMES = listOf(R.drawable.e_cat_right_1, R.drawable.e_cat_right_2) // walks left-to-right
+
+// Background layers (farthest to closest): bg3, bg2, bg1 (chart), bg0 (ring)
+const val AUDIENCE_FRAME_DELAY_MS = 4000L  //8000L  // 1 second per frame (bg3 audience)
+// bg3 audience: 8 sets of 3 frames, synced to ring; set = ring frame index (0-7), frame in set = 0->1->2->0
+private val AUDIENCE_FRAMES_BY_RING: List<List<Int>> = listOf(
+    listOf(R.drawable.audience_0_r0, R.drawable.audience_1_r0, R.drawable.audience_2_r0),
+    listOf(R.drawable.audience_0_r1, R.drawable.audience_1_r1, R.drawable.audience_2_r1),
+    listOf(R.drawable.audience_0_r2, R.drawable.audience_1_r2, R.drawable.audience_2_r2),
+    listOf(R.drawable.audience_0_r3, R.drawable.audience_1_r3, R.drawable.audience_2_r3),
+    listOf(R.drawable.audience_0_r4, R.drawable.audience_1_r4, R.drawable.audience_2_r4),
+    listOf(R.drawable.audience_0_r5, R.drawable.audience_1_r5, R.drawable.audience_2_r5),
+    listOf(R.drawable.audience_0_r6, R.drawable.audience_1_r6, R.drawable.audience_2_r6),
+    listOf(R.drawable.audience_0_r7, R.drawable.audience_1_r7, R.drawable.audience_2_r7)
+)
+private val BACKGROUND_LAYER_2_FRAMES = emptyList<Int>()
+// bg2 signs: buy_btc_sign (5 frames, 0->1->2->3->4->Kill); spawn 1-3 per wave; cleared when ring frame changes
+private val BUY_BTC_SIGN_FRAMES = listOf(
+    R.drawable.buy_btc_sign_0, R.drawable.buy_btc_sign_1, R.drawable.buy_btc_sign_2, R.drawable.buy_btc_sign_3, R.drawable.buy_btc_sign_4
+)
+const val SIGN_FRAME_DELAY_MS = 600L
+const val SIGN_SPAWN_INTERVAL_MS =  60_000L
+const val SIGN_ROW_Y_FRACTION_1 = 0.20f
+const val SIGN_ROW_Y_FRACTION_2 = 0.32f
+const val SIGN_ROW_Y_FRACTION_3 = 0.42f
+const val SIGN_SIZE_DP = 82f //48f
+const val SIGN_MARGIN_X_FRACTION = 0.05f
+// Ring: ring_0.png–ring_7.png (8 files); frame 0 = idle, 1–7 = rotation (right 1..7, left 7..1)
+private val RING_FRAMES = listOf(
+    R.drawable.ring_0, R.drawable.ring_1, R.drawable.ring_2, R.drawable.ring_3, R.drawable.ring_4,
+    R.drawable.ring_5, R.drawable.ring_6, R.drawable.ring_7
 )
 
+// Bobbing movement (boxers move left/right gradually, in opposite directions)
+const val BOBBING_MAX_X_LEFT = -20f   // Max pixels left of center
+const val BOBBING_MAX_X_RIGHT = 20f   // Max pixels right of center
+const val BOBBING_MAX_Y_UP = -10f     // Max pixels up from center
+const val BOBBING_MAX_Y_DOWN = 10f    // Max pixels down from center
+const val BOBBING_STEP_PX = 0.5f      // Pixels per tick
+const val BOBBING_INTERVAL_MS = 40L   // ms between updates
+
+// Depth scale (boxers appear smaller when up, larger when down)
+const val SCALE_SMALLER_PERCENT = 10f  // Scale down % when at max Y up
+const val SCALE_LARGER_PERCENT = 10f   // Scale up % when at max Y down
+
+// Spread-based defense mode constants
+// Rolling window length for median spread calculation (seconds); default 60L
+const val SPREAD_MEDIAN_WINDOW_SECONDS = 10L
+
+// Trigger defense when current spread > medianSpread * this multiplier; default 3.0f
+const val SPREAD_DEFENSE_MULTIPLIER = 0.25f
+
+// Ignore tiny spreads below this floor (percentage of mid-price); default 0.05f
+const val SPREAD_DEFENSE_MIN_PERCENT = 0.001f  // 0.05% = 5 basis points
+
+// Animation frame delay (milliseconds per frame)
+const val ANIMATION_FRAME_DELAY_MS = 80L  // 100ms = ~10 FPS for sprite animations
+
+// WebSocket/UI throttle (milliseconds between ExchangeData emissions)
+// Why 100ms: close to the 80ms animation frame delay, but caps exchange-driven state changes to ~10 updates/sec.
+// This reduces Compose recomposition / LaunchedEffect restart churn during high market activity (which can cancel animations).
+// Tuning:
+// - Lower bound: ~80ms (below animation frame delay usually adds churn without visible benefit)
+// - Typical: 80–150ms
+// - If glitches persist under heavy input: try 200–250ms
+const val EXCHANGE_EMIT_THROTTLE_MS = 100L
+
+// BG2 candle chart (top-half chart, shown periodically)
+const val BG2_SHOW_INTERVAL_MS =  3*60*1_000L //60_000L       // How often to show the chart (once per minute)
+const val BG2_VISIBLE_DURATION_MS = 30_000L //15_000L   // How long the chart stays visible
+const val BG2_MAX_CANDLES = 200 //60                 // Max 1-min candles to keep in memory; older dropped
+const val BG2_CANDLE_EMIT_THROTTLE_MS = 500L  // Min ms between emitting candle list to UI
+const val BG2_SHOW_AXIS_LABELS = true        // When true, show Y (price) and X (time) axis labels on the chart
+const val BG2_CHART_TOP_OFFSET_FRACTION = 0.15f // Fraction of screen height from top before chart starts; increase to move chart lower
+const val BG2_CHART_HEIGHT_FRACTION = 0.495f  // Fraction of screen height the chart band occupies
+
+const val DAMAGE_DEBUG = false  // set true to enable damage debug logs
+// Fallback timeout if onPlayOnceComplete is never invoked (e.g. effect cancelled); clears damage state so app cannot get stuck
+const val DAMAGE_COMPLETION_SAFETY_TIMEOUT_MS = 3000L
+
+// KO phase display time (ms) for single-frame Fall / Knocked Down / Rise; used by both Satoshi and Lizard
+const val KO_FALL_DISPLAY_MS = 400L
+const val KO_KNOCKED_DOWN_DISPLAY_MS = 5000L
+const val KO_RISE_DISPLAY_MS = 4600L
+
+// Damage points per punch type (adjustable for testing KO animation faster)
+const val DAMAGE_POINTS_JAB = 1
+const val DAMAGE_POINTS_BODY = 3
+const val DAMAGE_POINTS_HOOK = 4
+const val DAMAGE_POINTS_CROSS = 5
+const val DAMAGE_POINTS_UPPERCUT = 8
+// KO threshold and damage bar cap (lower for faster KO testing)
+const val MAX_DAMAGE_POINTS = 100 // 100
+
+// Bitcoin block height (Mempool) refresh interval (ms); once per minute
+const val BLOCK_HEIGHT_REFRESH_INTERVAL_MS = 60_000L
+// Half-cycle duration (ms) for block height update flash; 10 flashes = 20 half-cycles
+const val BLOCK_HEIGHT_FLASH_HALF_MS = 40L
+// When elapsed timer exceeds 10 min, flash 3 times every 30 seconds
+const val TIMER_FLASH_WHEN_ELAPSED_MS = 600_000L
+const val TIMER_FLASH_INTERVAL_MS = 30_000L
+
+// Volume percentage thresholds for punch types (adjustable)
+// Punch type is determined by volume percentage of max volume
+// These thresholds apply to both left (Binance) and right (Coinbase) hands
+const val VOLUME_PERCENT_JAB_MIN = 0.01f      // 1% = minimum for Jab
+const val VOLUME_PERCENT_JAB_MAX = 0.20f      // 1-20% = Jab
+const val VOLUME_PERCENT_BODY_MIN = 0.21f     // 21-40% = Body
+const val VOLUME_PERCENT_BODY_MAX = 0.40f
+const val VOLUME_PERCENT_HOOK_MIN = 0.41f     // 41-60% = Hook
+const val VOLUME_PERCENT_HOOK_MAX = 0.60f
+const val VOLUME_PERCENT_CROSS_MIN = 0.61f    // 61-80% = Cross
+const val VOLUME_PERCENT_CROSS_MAX = 0.80f
+const val VOLUME_PERCENT_UPPERCUT_MIN = 0.81f // 81-100% = Uppercut
+const val VOLUME_PERCENT_UPPERCUT_MAX = 1.00f
+
+// Volume percentage thresholds for defense types (adjustable)
+// Defense type is determined by BUY volume percentage of max BUY volume
+// Head Block: Both Binance and Coinbase BUY volume % between 67-100%
+const val DEFENSE_HEAD_BLOCK_MIN = 0.57f  //0.67
+const val DEFENSE_HEAD_BLOCK_MAX = 1.00f
+
+// Body Block: Both Binance and Coinbase BUY volume % between 34-66%
+const val DEFENSE_BODY_BLOCK_MIN = 0.24f  //0.24
+const val DEFENSE_BODY_BLOCK_MAX = 0.56f  //0.66
+
+// Dodge Left: Binance BUY volume % between 1-33%
+const val DEFENSE_DODGE_LEFT_MIN = 0.01f
+const val DEFENSE_DODGE_LEFT_MAX = 0.23f   //0.23
+
+// Dodge Right: Coinbase BUY volume % between 1-33%
+const val DEFENSE_DODGE_RIGHT_MIN = 0.01f
+const val DEFENSE_DODGE_RIGHT_MAX = 0.23f  //0.23
+
+// Defense cooldown durations (milliseconds) - per defense type
+// Minimum time to keep showing current defense before allowing switch
+const val DEFENSE_HEAD_BLOCK_COOLDOWN_MS = 1000L   // 1 second
+const val DEFENSE_BODY_BLOCK_COOLDOWN_MS = 1000L   // 1 second
+const val DEFENSE_DODGE_LEFT_COOLDOWN_MS = 1000L   // 1 second
+const val DEFENSE_DODGE_RIGHT_COOLDOWN_MS = 1000L  // 1 second
+
+// Minimum idle time (ms) after defense animation completes before re-entering defense
+const val MIN_IDLE_AFTER_DEFENSE_MS = 100L//300L
+
+// Punch priority hand (configurable - determines which hand executes when both are active)
+// RIGHT = Coinbase, LEFT = Binance
+val PUNCH_PRIORITY_HAND = HandSide.RIGHT
+
+// Punch cooldown durations (milliseconds) - per punch type
+const val PUNCH_COOLDOWN_JAB_MS = 1000L      // 1 second
+const val PUNCH_COOLDOWN_BODY_MS = 2000L     // 2 seconds
+const val PUNCH_COOLDOWN_HOOK_MS = 3000L     // 3 seconds
+const val PUNCH_COOLDOWN_CROSS_MS = 4000L    // 4 seconds
+const val PUNCH_COOLDOWN_UPPERCUT_MS = 5000L // 5 seconds
+
+// Satoshi idle animation frame resources
+val SATOSHI_IDLE_FRAMES = listOf(
+    R.drawable.satoshi_ready_0,
+    R.drawable.satoshi_ready_1,
+    R.drawable.satoshi_ready_2,
+    R.drawable.satoshi_ready_3,
+    R.drawable.satoshi_ready_4,
+    R.drawable.satoshi_ready_5
+)
+
+// Lizard (villain) idle animation frames
+val LIZARD_IDLE_FRAMES = listOf(
+    R.drawable.lizard_idle_0,
+    R.drawable.lizard_idle_1,
+    R.drawable.lizard_idle_2,
+    R.drawable.lizard_idle_3,
+    R.drawable.lizard_idle_4,
+    R.drawable.lizard_idle_5
+)
+
+// Lizard punch and defense frames (placeholders - PNGs to be supplied)
+val LIZARD_HEAD_BLOCK_FRAMES = listOf(
+    R.drawable.lizard_block_head_0,
+    R.drawable.lizard_block_head_1,
+    R.drawable.lizard_block_head_2
+)
+val LIZARD_BODY_BLOCK_FRAMES = listOf(
+    R.drawable.lizard_block_body_0,
+    R.drawable.lizard_block_body_1,
+    R.drawable.lizard_block_body_2
+)
+val LIZARD_DODGE_LEFT_FRAMES = listOf(
+    R.drawable.lizard_left_dodge_0,
+    R.drawable.lizard_left_dodge_1,
+    R.drawable.lizard_left_dodge_2
+)
+val LIZARD_DODGE_RIGHT_FRAMES = listOf(
+    R.drawable.lizard_right_dodge_0,
+    R.drawable.lizard_right_dodge_1,
+    R.drawable.lizard_right_dodge_2
+)
+val LIZARD_LEFT_JAB_FRAMES = listOf(
+    R.drawable.lizard_left_jab_0,
+    R.drawable.lizard_left_jab_1,
+    R.drawable.lizard_left_jab_2
+)
+val LIZARD_LEFT_BODY_FRAMES = listOf(
+    R.drawable.lizard_left_body_0,
+    R.drawable.lizard_left_body_1,
+    R.drawable.lizard_left_body_2
+)
+val LIZARD_LEFT_HOOK_FRAMES = listOf(
+    R.drawable.lizard_left_hook_0,
+    R.drawable.lizard_left_hook_1,
+    R.drawable.lizard_left_hook_2,
+    R.drawable.lizard_left_hook_3
+)
+val LIZARD_LEFT_CROSS_FRAMES = listOf(
+    R.drawable.lizard_left_cross_0,
+    R.drawable.lizard_left_cross_1,
+    R.drawable.lizard_left_cross_2
+)
+val LIZARD_LEFT_UPPERCUT_FRAMES = listOf(
+    R.drawable.lizard_left_uppercut_0,
+    R.drawable.lizard_left_uppercut_1,
+    R.drawable.lizard_left_uppercut_2,
+    R.drawable.lizard_left_uppercut_3
+)
+val LIZARD_RIGHT_JAB_FRAMES = listOf(
+    R.drawable.lizard_right_jab_0,
+    R.drawable.lizard_right_jab_1,
+    R.drawable.lizard_right_jab_2
+)
+val LIZARD_RIGHT_BODY_FRAMES = listOf(
+    R.drawable.lizard_right_body_0,
+    R.drawable.lizard_right_body_1,
+    R.drawable.lizard_right_body_2
+)
+val LIZARD_RIGHT_HOOK_FRAMES = listOf(
+    R.drawable.lizard_right_hook_0,
+    R.drawable.lizard_right_hook_1,
+    R.drawable.lizard_right_hook_2,
+    R.drawable.lizard_right_hook_3
+)
+val LIZARD_RIGHT_CROSS_FRAMES = listOf(
+    R.drawable.lizard_right_cross_0,
+    R.drawable.lizard_right_cross_1,
+    R.drawable.lizard_right_cross_2
+)
+val LIZARD_RIGHT_UPPERCUT_FRAMES = listOf(
+    R.drawable.lizard_right_uppercut_0,
+    R.drawable.lizard_right_uppercut_1,
+    R.drawable.lizard_right_uppercut_2,
+    R.drawable.lizard_right_uppercut_3
+)
+
+// Lizard damage animation frames (head)
+val LIZARD_LEFT_DAMAGE_HEAD_FRAMES = listOf(
+    R.drawable.lizard_left_damage_head_0,
+    R.drawable.lizard_left_damage_head_1,
+    R.drawable.lizard_left_damage_head_2
+)
+val LIZARD_RIGHT_DAMAGE_HEAD_FRAMES = listOf(
+    R.drawable.lizard_right_damage_head_0,
+    R.drawable.lizard_right_damage_head_1,
+    R.drawable.lizard_right_damage_head_2
+)
+
+// Lizard damage animation frames (small head - JAB only)
+val LIZARD_LEFT_SMALL_DAMAGE_HEAD_FRAMES = listOf(
+    R.drawable.lizard_left_small_head_dmg_0,
+    R.drawable.lizard_left_small_head_dmg_1,
+    R.drawable.lizard_left_small_head_dmg_2
+)
+val LIZARD_RIGHT_SMALL_DAMAGE_HEAD_FRAMES = listOf(
+    R.drawable.lizard_right_small_head_dmg_0,
+    R.drawable.lizard_right_small_head_dmg_1,
+    R.drawable.lizard_right_small_head_dmg_2
+)
+
+// Lizard damage animation frames (body)
+val LIZARD_LEFT_DAMAGE_BODY_FRAMES = listOf(
+    R.drawable.lizard_left_body_dmg_0,
+    R.drawable.lizard_left_body_dmg_1,
+    R.drawable.lizard_left_body_dmg_2
+)
+val LIZARD_RIGHT_DAMAGE_BODY_FRAMES = listOf(
+    R.drawable.lizard_right_body_dmg_0,
+    R.drawable.lizard_right_body_dmg_1,
+    R.drawable.lizard_right_body_dmg_2
+)
+// Lizard damage animation frames (center uppercut)
+val LIZARD_CENTER_DAMAGE_UPPERCUT_FRAMES = listOf(
+    R.drawable.lizard_damage_center_0,
+    R.drawable.lizard_damage_center_1,
+    R.drawable.lizard_damage_center_2,
+    R.drawable.lizard_damage_center_3
+)
+
+// KO sequence frames (Satoshi and Lizard: real KO assets)
+val SATOSHI_FALL_FRAMES = listOf(R.drawable.satoshi_falling_0)
+val SATOSHI_KNOCKED_DOWN_FRAMES = listOf(R.drawable.satoshi_knocked_down_0)
+val SATOSHI_RISE_FRAMES = listOf(R.drawable.satoshi_rising_0)
+val LIZARD_FALL_FRAMES = listOf(R.drawable.lizard_falling_0)
+val LIZARD_KNOCKED_DOWN_FRAMES = listOf(R.drawable.lizard_knocked_down_0)
+val LIZARD_RISE_FRAMES = listOf(R.drawable.lizard_rising_0)
+
+fun getSatoshiKOPhaseFrames(phase: KOPhase): List<Int> = when (phase) {
+    KOPhase.FALL -> SATOSHI_FALL_FRAMES
+    KOPhase.KNOCKED_DOWN -> SATOSHI_KNOCKED_DOWN_FRAMES
+    KOPhase.RISE -> SATOSHI_RISE_FRAMES
+}
+
+fun getLizardKOPhaseFrames(phase: KOPhase): List<Int> = when (phase) {
+    KOPhase.FALL -> LIZARD_FALL_FRAMES
+    KOPhase.KNOCKED_DOWN -> LIZARD_KNOCKED_DOWN_FRAMES
+    KOPhase.RISE -> LIZARD_RISE_FRAMES
+}
+
+// Idle animation loop duration (6 frames × 100ms = 600ms)
+val IDLE_LOOP_DURATION_MS = SATOSHI_IDLE_FRAMES.size * ANIMATION_FRAME_DELAY_MS
+
+// Satoshi punch animation frames
+// Right hand punch animations (Coinbase BUY volume)
+val SATOSHI_RIGHT_JAB_FRAMES = listOf(
+    R.drawable.satoshi_right_jab_0,
+    R.drawable.satoshi_right_jab_1,
+    R.drawable.satoshi_right_jab_2
+)
+
+val SATOSHI_RIGHT_BODY_FRAMES = listOf(
+    R.drawable.satoshi_right_body_0,
+    R.drawable.satoshi_right_body_1,
+    R.drawable.satoshi_right_body_2
+)
+
+val SATOSHI_RIGHT_HOOK_FRAMES = listOf(
+    R.drawable.satoshi_right_hook_0,
+    R.drawable.satoshi_right_hook_1,
+    R.drawable.satoshi_right_hook_2
+)
+
+val SATOSHI_RIGHT_CROSS_FRAMES = listOf(
+    R.drawable.satoshi_right_cross_0,
+    R.drawable.satoshi_right_cross_1,
+    R.drawable.satoshi_right_cross_2
+)
+
+val SATOSHI_RIGHT_UPPERCUT_FRAMES = listOf(
+    R.drawable.satoshi_right_uppercut_0,
+    R.drawable.satoshi_right_uppercut_1,
+    R.drawable.satoshi_right_uppercut_2,
+    R.drawable.satoshi_right_uppercut_3
+)
+
+// Left hand punch animations (Binance BUY volume)
+val SATOSHI_LEFT_JAB_FRAMES = listOf(
+    R.drawable.satoshi_left_jab_0,
+    R.drawable.satoshi_left_jab_1,
+    R.drawable.satoshi_left_jab_2
+)
+
+val SATOSHI_LEFT_BODY_FRAMES = listOf(
+    R.drawable.satoshi_left_body_0,
+    R.drawable.satoshi_left_body_1,
+    R.drawable.satoshi_left_body_2
+)
+
+val SATOSHI_LEFT_HOOK_FRAMES = listOf(
+    R.drawable.satoshi_left_hook_0,
+    R.drawable.satoshi_left_hook_1,
+    R.drawable.satoshi_left_hook_2
+)
+
+val SATOSHI_LEFT_CROSS_FRAMES = listOf(
+    R.drawable.satoshi_left_cross_0,
+    R.drawable.satoshi_left_cross_1,
+    R.drawable.satoshi_left_cross_2
+)
+
+val SATOSHI_LEFT_UPPERCUT_FRAMES = listOf(
+    R.drawable.satoshi_left_uppercut_0,
+    R.drawable.satoshi_left_uppercut_1,
+    R.drawable.satoshi_left_uppercut_2,
+    R.drawable.satoshi_left_uppercut_3
+)
+
+// Satoshi defense animation frames
+// Head Block
+val SATOSHI_HEAD_BLOCK_FRAMES = listOf(
+    R.drawable.satoshi_block_head_0,
+    R.drawable.satoshi_block_head_1,
+    R.drawable.satoshi_block_head_2
+)
+
+// Body Block
+val SATOSHI_BODY_BLOCK_FRAMES = listOf(
+    R.drawable.satoshi_block_body_0,
+    R.drawable.satoshi_block_body_1,
+    R.drawable.satoshi_block_body_2
+)
+
+// Dodge Left
+val SATOSHI_DODGE_LEFT_FRAMES = listOf(
+    R.drawable.satoshi_left_dodge_0,
+    R.drawable.satoshi_left_dodge_1,
+    R.drawable.satoshi_left_dodge_2
+)
+
+// Dodge Right
+val SATOSHI_DODGE_RIGHT_FRAMES = listOf(
+    R.drawable.satoshi_right_dodge_0,
+    R.drawable.satoshi_right_dodge_1,
+    R.drawable.satoshi_right_dodge_2
+)
+
+// Satoshi damage animation frames (head)
+val SATOSHI_LEFT_DAMAGE_HEAD_FRAMES = listOf(
+    R.drawable.satoshi_left_dmg_head_0,
+    R.drawable.satoshi_left_dmg_head_1,
+    R.drawable.satoshi_left_dmg_head_2
+)
+val SATOSHI_RIGHT_DAMAGE_HEAD_FRAMES = listOf(
+    R.drawable.satoshi_right_dmg_head_0,
+    R.drawable.satoshi_right_dmg_head_1,
+    R.drawable.satoshi_right_dmg_head_2
+)
+
+// Satoshi damage animation frames (center head / uppercut)
+val SATOSHI_CENTER_DAMAGE_UPPERCUT_FRAMES = listOf(
+    R.drawable.satoshi_dmg_head_0,
+    R.drawable.satoshi_dmg_head_1,
+    R.drawable.satoshi_dmg_head_2,
+    R.drawable.satoshi_dmg_head_3,
+)
+
+// Satoshi damage animation frames (body)
+val SATOSHI_LEFT_DAMAGE_BODY_FRAMES = listOf(
+    R.drawable.satoshi_left_dmg_body_0,
+    R.drawable.satoshi_left_dmg_body_1,
+    R.drawable.satoshi_left_dmg_body_2
+)
+val SATOSHI_RIGHT_DAMAGE_BODY_FRAMES = listOf(
+    R.drawable.satoshi_right_dmg_body_0,
+    R.drawable.satoshi_right_dmg_body_1,
+    R.drawable.satoshi_right_dmg_body_2
+)
+
+// Shared state for sprite position
+class SpriteState {
+    var position: Offset = Offset.Zero
+}
+
+// Sprite type enum (to be updated for boxing theme)
+enum class SpriteType {
+    SATOSHI,  // Hero boxer
+    LIZARD,   // Villain boxer
+    CAT       // Walk across fg3 (on top of Satoshi)
+}
+
+// Punch attack types
+enum class PunchType {
+    JAB,
+    BODY,
+    HOOK,
+    CROSS,
+    UPPERCUT
+}
+
+// Hand side for punches
+enum class HandSide {
+    LEFT,   // Binance BUY volume
+    RIGHT   // Coinbase BUY volume
+}
+
+// Defense types
+enum class DefenseType {
+    HEAD_BLOCK,
+    BODY_BLOCK,
+    DODGE_LEFT,
+    DODGE_RIGHT
+}
+
+// Damage animation types (PNG frames to be provided later)
+enum class DamageAnimationType {
+    LEFT_DAMAGE_HEAD,
+    RIGHT_DAMAGE_HEAD,
+    LEFT_SMALL_DAMAGE_HEAD,
+    RIGHT_SMALL_DAMAGE_HEAD,
+    LEFT_DAMAGE_BODY,
+    RIGHT_DAMAGE_BODY,
+    CENTER_DAMAGE_UPPERCUT
+}
+
+// bg2 signs: one spawn instance (0->1->2->Kill); rowIndex 0..2 = which Y row
+data class BtcSignSpawn(
+    val id: Long,
+    val xPx: Float,
+    val yPx: Float,
+    val frameIndex: Int,
+    val rowIndex: Int
+)
+
+// Pending impact check: run hit detection once at 2nd-last frame of punch
+data class ImpactCheckData(
+    val punchType: PunchType,
+    val handSide: HandSide,
+    val frameCount: Int
+)
+
+// Sprite data structure (simplified for boxing theme)
+data class SpriteData(
+    val spriteState: SpriteState,
+    val spriteResourceId: Int,  // For static sprites or current frame
+    val spriteType: SpriteType,
+    val layer: Int = 2,  // 1=fg1(Lizard), 2=fg2(Satoshi), 3=fg3(Cat)
+    val sizeScale: Float = 1.0f, // Current size multiplier (default 1.0 = 100%)
+    val spriteSizeDp: Float = 64f, // Sprite size in dp (default 64dp, Satoshi uses 128dp)
+    val animationFrames: List<Int> = emptyList(),  // List of drawable resource IDs for animation
+    val currentFrameIndex: Int = 0,  // Current frame in animation sequence
+    val isAnimated: Boolean = false,  // Whether this sprite uses animation
+    val currentPunchType: PunchType? = null,  // Current punch being performed (null = idle)
+    val currentHandSide: HandSide? = null,    // Which hand is punching (null = idle)
+    val isPunching: Boolean = false,           // Whether currently performing a punch
+    val playAnimationOnce: Boolean = false,    // If true, play animation once (e.g. defense); if false, loop (e.g. idle)
+    val currentDefenseType: DefenseType? = null, // Current defense animation being performed (null = not defending)
+    val isDefending: Boolean = false            // Whether currently performing a defense animation
+)
+
+// Helper functions for punch cooldown management
+fun getPunchCooldownMs(punchType: PunchType): Long {
+    return when (punchType) {
+        PunchType.JAB -> PUNCH_COOLDOWN_JAB_MS
+        PunchType.BODY -> PUNCH_COOLDOWN_BODY_MS
+        PunchType.HOOK -> PUNCH_COOLDOWN_HOOK_MS
+        PunchType.CROSS -> PUNCH_COOLDOWN_CROSS_MS
+        PunchType.UPPERCUT -> PUNCH_COOLDOWN_UPPERCUT_MS
+    }
+}
+
+fun isPunchOnCooldown(punchType: PunchType, lastPunchTime: Map<PunchType, Long>): Boolean {
+    val lastTime = lastPunchTime[punchType] ?: return false
+    val cooldownMs = getPunchCooldownMs(punchType)
+    val currentTime = System.currentTimeMillis()
+    return (currentTime - lastTime) < cooldownMs
+}
+
+fun areAllPunchesOnCooldown(lastPunchTime: Map<PunchType, Long>): Boolean {
+    // Only check punch types that have been executed at least once
+    // If no punches have been executed, return false (not all on cooldown)
+    if (lastPunchTime.isEmpty()) return false
+    
+    // Check if all executed punch types are still on cooldown
+    return lastPunchTime.keys.all { punchType ->
+        isPunchOnCooldown(punchType, lastPunchTime)
+    }
+}
+
+// Helper functions for defense cooldown management
+fun getDefenseCooldownMs(defenseType: DefenseType): Long {
+    return when (defenseType) {
+        DefenseType.HEAD_BLOCK -> DEFENSE_HEAD_BLOCK_COOLDOWN_MS
+        DefenseType.BODY_BLOCK -> DEFENSE_BODY_BLOCK_COOLDOWN_MS
+        DefenseType.DODGE_LEFT -> DEFENSE_DODGE_LEFT_COOLDOWN_MS
+        DefenseType.DODGE_RIGHT -> DEFENSE_DODGE_RIGHT_COOLDOWN_MS
+    }
+}
+
+fun isDefenseOnCooldown(currentDefenseType: DefenseType?, lastDefenseSwitchTime: Long): Boolean {
+    if (currentDefenseType == null) return false
+    val cooldownMs = getDefenseCooldownMs(currentDefenseType)
+    val currentTime = System.currentTimeMillis()
+    return (currentTime - lastDefenseSwitchTime) < cooldownMs
+}
+
+// Damage system: which defense successfully blocks/evades which attack
+fun getRequiredDefenseForAttack(punchType: PunchType, handSide: HandSide): DefenseType {
+    return when (punchType) {
+        PunchType.JAB, PunchType.BODY -> if (handSide == HandSide.LEFT) DefenseType.DODGE_RIGHT else DefenseType.DODGE_LEFT
+        PunchType.HOOK, PunchType.CROSS -> DefenseType.BODY_BLOCK
+        PunchType.UPPERCUT -> DefenseType.HEAD_BLOCK
+    }
+}
+
+// Damage points per punch type (for damage bar 0-MAX_DAMAGE_POINTS)
+fun getDamagePoints(punchType: PunchType): Int = when (punchType) {
+    PunchType.JAB -> DAMAGE_POINTS_JAB
+    PunchType.BODY -> DAMAGE_POINTS_BODY
+    PunchType.HOOK -> DAMAGE_POINTS_HOOK
+    PunchType.CROSS -> DAMAGE_POINTS_CROSS
+    PunchType.UPPERCUT -> DAMAGE_POINTS_UPPERCUT
+}
+
+// KO sequence phase (placeholders use idle so each phase completes and returns to idle)
+enum class KOPhase { FALL, KNOCKED_DOWN, RISE }
+
+// Damage system: which damage animation type to show for a given attack
+fun getDamageTypeForAttack(punchType: PunchType, handSide: HandSide): DamageAnimationType {
+    return when (punchType) {
+        PunchType.JAB -> if (handSide == HandSide.LEFT) DamageAnimationType.LEFT_SMALL_DAMAGE_HEAD else DamageAnimationType.RIGHT_SMALL_DAMAGE_HEAD
+        PunchType.BODY -> if (handSide == HandSide.LEFT) DamageAnimationType.RIGHT_DAMAGE_BODY else DamageAnimationType.LEFT_DAMAGE_BODY
+        PunchType.HOOK, PunchType.CROSS -> if (handSide == HandSide.LEFT) DamageAnimationType.RIGHT_DAMAGE_HEAD else DamageAnimationType.LEFT_DAMAGE_HEAD
+        PunchType.UPPERCUT -> DamageAnimationType.CENTER_DAMAGE_UPPERCUT
+    }
+}
+
+fun getSatoshiDamageFrames(type: DamageAnimationType): List<Int> = when (type) {
+    DamageAnimationType.LEFT_DAMAGE_HEAD -> SATOSHI_LEFT_DAMAGE_HEAD_FRAMES
+    DamageAnimationType.RIGHT_DAMAGE_HEAD -> SATOSHI_RIGHT_DAMAGE_HEAD_FRAMES
+    DamageAnimationType.LEFT_SMALL_DAMAGE_HEAD -> SATOSHI_LEFT_DAMAGE_HEAD_FRAMES
+    DamageAnimationType.RIGHT_SMALL_DAMAGE_HEAD -> SATOSHI_RIGHT_DAMAGE_HEAD_FRAMES
+    DamageAnimationType.LEFT_DAMAGE_BODY -> SATOSHI_LEFT_DAMAGE_BODY_FRAMES
+    DamageAnimationType.RIGHT_DAMAGE_BODY -> SATOSHI_RIGHT_DAMAGE_BODY_FRAMES
+    DamageAnimationType.CENTER_DAMAGE_UPPERCUT -> SATOSHI_CENTER_DAMAGE_UPPERCUT_FRAMES
+}
+
+fun getLizardDamageFrames(type: DamageAnimationType): List<Int> = when (type) {
+    DamageAnimationType.LEFT_DAMAGE_HEAD -> LIZARD_LEFT_DAMAGE_HEAD_FRAMES
+    DamageAnimationType.RIGHT_DAMAGE_HEAD -> LIZARD_RIGHT_DAMAGE_HEAD_FRAMES
+    DamageAnimationType.LEFT_SMALL_DAMAGE_HEAD -> LIZARD_LEFT_SMALL_DAMAGE_HEAD_FRAMES
+    DamageAnimationType.RIGHT_SMALL_DAMAGE_HEAD -> LIZARD_RIGHT_SMALL_DAMAGE_HEAD_FRAMES
+    DamageAnimationType.LEFT_DAMAGE_BODY -> LIZARD_LEFT_DAMAGE_BODY_FRAMES
+    DamageAnimationType.RIGHT_DAMAGE_BODY -> LIZARD_RIGHT_DAMAGE_BODY_FRAMES
+    DamageAnimationType.CENTER_DAMAGE_UPPERCUT -> LIZARD_CENTER_DAMAGE_UPPERCUT_FRAMES
+}
+
+// #region agent log
+private const val DEBUG_SESSION_ID = "debug-session"
+private const val DEBUG_RUN_ID = "run1"
+private fun agentLog(location: String, message: String, dataStr: String, hypothesisId: String) {
+    if (!ENABLE_LIZARD_LOGS) return
+    val ts = System.currentTimeMillis()
+    val line = """{"sessionId":"$DEBUG_SESSION_ID","runId":"$DEBUG_RUN_ID","location":"$location","message":"$message","data":$dataStr,"timestamp":$ts,"hypothesisId":"$hypothesisId"}"""
+    Log.d("LizardDebug", line)
+    try { File("d:\\BTC_PunchUp\\.cursor\\debug.log").appendText("$line\n") } catch (_: Exception) {}
+}
+// #endregion
+
 class MainActivity : ComponentActivity() {
+    private var webSocketRepository: WebSocketRepository? = null
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MyAppTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = androidx.compose.ui.graphics.Color.Black
-                ) {
-                    PriceDisplayScreen()
+                var showSplash by remember { mutableStateOf(true) }
+                if (showSplash) {
+                    SplashScreen(onDismiss = { showSplash = false })
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = Color.Black
+                    ) {
+                        PriceDisplayScreen(
+                            onRepositoryCreated = { repository ->
+                                webSocketRepository = repository
+                            }
+                        )
+                    }
                 }
             }
+        }
+    }
+    
+    override fun onPause() {
+        super.onPause()
+        webSocketRepository?.disconnect()
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        webSocketRepository?.connect()
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        webSocketRepository?.cleanup()
+        webSocketRepository = null
+    }
+}
+
+@Composable
+fun SplashScreen(onDismiss: () -> Unit) {
+    var dismissRequested by remember { mutableStateOf(false) }
+    val alpha = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        delay(SPLASH_DISPLAY_MS)
+        dismissRequested = true
+    }
+    LaunchedEffect(dismissRequested) {
+        if (dismissRequested) {
+            alpha.animateTo(0f, tween(SPLASH_FADE_OUT_MS))
+            onDismiss()
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .clickable { if (!dismissRequested) dismissRequested = true }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .alpha(alpha.value)
+        ) {
+            Image(
+                painter = painterResource(R.drawable.vv_splash),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
         }
     }
 }
 
 @Composable
-fun PriceDisplayScreen() {
+fun PriceDisplayScreen(
+    onRepositoryCreated: (WebSocketRepository) -> Unit = {}
+) {
     val repository = remember { PriceRepository() }
+    val webSocketRepository = remember { 
+        WebSocketRepository().also { onRepositoryCreated(it) }
+    }
     
-    // Binance state
+    // WebSocket data
+    val binanceWebSocketData by webSocketRepository.binanceData.collectAsState()
+    val coinbaseWebSocketData by webSocketRepository.coinbaseData.collectAsState()
+
+    // Defense when sell volume > buy volume; Offense otherwise (Option A: volume-based)
+    val isBinanceDefense = (binanceWebSocketData.sellVolume ?: 0.0) > (binanceWebSocketData.buyVolume ?: 0.0)
+    val isCoinbaseDefense = (coinbaseWebSocketData.sellVolume ?: 0.0) > (coinbaseWebSocketData.buyVolume ?: 0.0)
+    
+    // Binance state (use WebSocket data, fallback to polling if needed)
     var binancePrice by remember { mutableStateOf<Double?>(null) }
     var binancePreviousPrice by remember { mutableStateOf<Double?>(null) }
     var binanceIsConnected by remember { mutableStateOf(false) }
     var binanceBuyVolume by remember { mutableStateOf<Double?>(null) }
     var binanceSellVolume by remember { mutableStateOf<Double?>(null) }
     
-    // Coinbase state
+    // Coinbase state (use WebSocket data, fallback to polling if needed)
     var coinbasePrice by remember { mutableStateOf<Double?>(null) }
     var coinbasePreviousPrice by remember { mutableStateOf<Double?>(null) }
     var coinbaseIsConnected by remember { mutableStateOf(false) }
     var coinbaseBuyVolume by remember { mutableStateOf<Double?>(null) }
     var coinbaseSellVolume by remember { mutableStateOf<Double?>(null) }
     
+    // Flag to enable/disable WebSocket (set to false to use polling fallback)
+    val useWebSocket = true
+    
     // Volume normalization and animation
     var maxVolume by remember { mutableStateOf(1.0) }
+    
+    // Exchange-specific BUY volume tracking (for hero boxer punches)
+    var maxBinanceBuyVolume by remember { mutableStateOf(0.0) }  // Historical max Binance BUY volume
+    var maxCoinbaseBuyVolume by remember { mutableStateOf(0.0) }  // Historical max Coinbase BUY volume
+    
+    // Exchange-specific SELL volume tracking (for future villain boxer animations).
+    // Intended villain logic (not yet implemented): mirror hero using SELL volume —
+    // villain offense when sell > buy, defense otherwise; SELL % drives villain punch/block type.
+    var maxBinanceSellVolume by remember { mutableStateOf(0.0) }  // Historical max Binance SELL volume
+    var maxCoinbaseSellVolume by remember { mutableStateOf(0.0) }  // Historical max Coinbase SELL volume
+    
     var binanceVolumeAnimating by remember { mutableStateOf(false) }
     var coinbaseVolumeAnimating by remember { mutableStateOf(false) }
     
+    // Bitcoin block height (Mempool.space), refreshed every BLOCK_HEIGHT_REFRESH_INTERVAL_MS
+    var blockHeight by remember { mutableStateOf<Int?>(null) }
+    var blockHeightFlashOn by remember { mutableStateOf(false) }
+    var lastBlockHeightUpdateTimeMs by remember { mutableStateOf<Long?>(null) }
+    var tick by remember { mutableStateOf(0) }
+    var timerOverTenMinFlashOn by remember { mutableStateOf(false) }
+    var overTenMin by remember { mutableStateOf(false) }
+    var backgroundFrameIndices by remember { mutableStateOf(listOf(0, 0, 0)) }
+    var bg2Visible by remember { mutableStateOf(false) }
+    var ringRotationTriggerCount by remember { mutableStateOf(0) }
+    var isRingRotating by remember { mutableStateOf(false) }
+    var catSpawnTriggerCount by remember { mutableStateOf(0) }
+    var catDirectionLeft by remember { mutableStateOf<Boolean?>(null) }  // true = walking left, false = right; null = no cat
+    var signSpawns by remember { mutableStateOf<List<BtcSignSpawn>>(emptyList()) }
+    var lastRingFrameIndex by remember { mutableStateOf(0) }
+
+    // BG2 chart: show once every BG2_SHOW_INTERVAL_MS for BG2_VISIBLE_DURATION_MS
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(BG2_SHOW_INTERVAL_MS)
+            bg2Visible = true
+            delay(BG2_VISIBLE_DURATION_MS)
+            bg2Visible = false
+        }
+    }
+
+    val candleData by webSocketRepository.candleData.collectAsState()
+
     // Calculate max volume from all volumes
-    // Use 0.0 for null values to ensure maxVolume is always > 0
     val calculateMaxVolume: () -> Double = {
         val volumes = listOf(
             binanceBuyVolume ?: 0.0,
@@ -150,7 +907,6 @@ fun PriceDisplayScreen() {
             coinbaseBuyVolume ?: 0.0,
             coinbaseSellVolume ?: 0.0
         )
-        // Ensure maxVolume is at least 1.0 to avoid division by zero
         val maxVol = maxOf(volumes.maxOrNull() ?: 1.0, 1.0)
         if (ENABLE_EXCHANGE_LOGS) {
             Log.d("MainActivity", "Max Volume: $maxVol, Volumes: BinanceBuy=${binanceBuyVolume}, BinanceSell=${binanceSellVolume}, CoinbaseBuy=${coinbaseBuyVolume}, CoinbaseSell=${coinbaseSellVolume}")
@@ -166,20 +922,15 @@ fun PriceDisplayScreen() {
     
     // Watch for Binance volume changes and trigger animation
     LaunchedEffect(binanceBuyVolume, binanceSellVolume) {
-        // Check if volumes actually changed (not just first load)
         val buyChanged = binanceBuyVolume != prevBinanceBuy
         val sellChanged = binanceSellVolume != prevBinanceSell
         
         if (buyChanged || sellChanged) {
-            // Update previous values
             prevBinanceBuy = binanceBuyVolume
             prevBinanceSell = binanceSellVolume
             
-            // Trigger animation only if volumes exist and changed
             if (binanceBuyVolume != null || binanceSellVolume != null) {
                 binanceVolumeAnimating = true
-                
-                // Reset animation flag after animation completes
                 delay(500)
                 binanceVolumeAnimating = false
             }
@@ -188,20 +939,15 @@ fun PriceDisplayScreen() {
     
     // Watch for Coinbase volume changes and trigger animation
     LaunchedEffect(coinbaseBuyVolume, coinbaseSellVolume) {
-        // Check if volumes actually changed (not just first load)
         val buyChanged = coinbaseBuyVolume != prevCoinbaseBuy
         val sellChanged = coinbaseSellVolume != prevCoinbaseSell
         
         if (buyChanged || sellChanged) {
-            // Update previous values
             prevCoinbaseBuy = coinbaseBuyVolume
             prevCoinbaseSell = coinbaseSellVolume
             
-            // Trigger animation only if volumes exist and changed
             if (coinbaseBuyVolume != null || coinbaseSellVolume != null) {
                 coinbaseVolumeAnimating = true
-                
-                // Reset animation flag after animation completes
                 delay(500)
                 coinbaseVolumeAnimating = false
             }
@@ -213,387 +959,1602 @@ fun PriceDisplayScreen() {
         maxVolume = calculateMaxVolume()
     }
     
-    // Calculate Binance speed multiplier (for original sprite)
-    val binanceSpeedMultiplier = remember(binanceBuyVolume, binanceSellVolume) {
-        val totalVolume = (binanceBuyVolume ?: 0.0) + (binanceSellVolume ?: 0.0)
-        val deltaVolume = (binanceBuyVolume ?: 0.0) - (binanceSellVolume ?: 0.0)
-        
-        // Normalize delta (ratio-based)
-        val normalizedDelta = if (totalVolume > 0) deltaVolume / totalVolume else 0.0
-        
-        // Dynamic scaling factor based on volume magnitude
-        val scaleFactor = when {
-            totalVolume > 1000 -> 0.5f
-            totalVolume > 100 -> 1.0f
-            else -> 2.0f
+    // Update max Binance BUY volume (track historical maximum)
+    LaunchedEffect(binanceBuyVolume) {
+        val currentBuy = binanceBuyVolume ?: 0.0
+        if (currentBuy > 0.0 && (maxBinanceBuyVolume == 0.0 || currentBuy > maxBinanceBuyVolume)) {
+            maxBinanceBuyVolume = currentBuy
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "New max Binance BUY Volume: $maxBinanceBuyVolume (current: $currentBuy)")
+            }
         }
-        
-        // Calculate speed multiplier (buy increases, sell decreases)
-        // Ensure minimum multiplier is 1.0 (cannot go below current default speed)
-        val multiplier = (1.0 + (normalizedDelta * scaleFactor)).coerceAtLeast(1.0).toFloat()
-        
-        if (ENABLE_EXCHANGE_LOGS) {
-            Log.d("MainActivity", "Binance Speed Multiplier: $multiplier (Buy: ${binanceBuyVolume}, Sell: ${binanceSellVolume}, Delta: $deltaVolume, Normalized: $normalizedDelta, Scale: $scaleFactor)")
-        }
-        
-        multiplier
     }
     
-    // Calculate Coinbase speed multiplier (for Bitcoin sprite)
-    val coinbaseSpeedMultiplier = remember(coinbaseBuyVolume, coinbaseSellVolume) {
-        val totalVolume = (coinbaseBuyVolume ?: 0.0) + (coinbaseSellVolume ?: 0.0)
-        val deltaVolume = (coinbaseBuyVolume ?: 0.0) - (coinbaseSellVolume ?: 0.0)
-        
-        // Normalize delta (ratio-based)
-        val normalizedDelta = if (totalVolume > 0) deltaVolume / totalVolume else 0.0
-        
-        // Dynamic scaling factor based on volume magnitude
-        val scaleFactor = when {
-            totalVolume > 1000 -> 0.5f
-            totalVolume > 100 -> 1.0f
-            else -> 2.0f
+    // Update max Coinbase BUY volume (track historical maximum)
+    LaunchedEffect(coinbaseBuyVolume) {
+        val currentBuy = coinbaseBuyVolume ?: 0.0
+        if (currentBuy > 0.0 && (maxCoinbaseBuyVolume == 0.0 || currentBuy > maxCoinbaseBuyVolume)) {
+            maxCoinbaseBuyVolume = currentBuy
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "New max Coinbase BUY Volume: $maxCoinbaseBuyVolume (current: $currentBuy)")
+            }
         }
-        
-        // Calculate speed multiplier (buy increases, sell decreases)
-        // Ensure minimum multiplier is 1.0 (cannot go below current default speed)
-        val multiplier = (1.0 + (normalizedDelta * scaleFactor)).coerceAtLeast(1.0).toFloat()
-        
-        if (ENABLE_EXCHANGE_LOGS) {
-            Log.d("MainActivity", "Coinbase Speed Multiplier: $multiplier (Buy: ${coinbaseBuyVolume}, Sell: ${coinbaseSellVolume}, Delta: $deltaVolume, Normalized: $normalizedDelta, Scale: $scaleFactor)")
-        }
-        
-        multiplier
     }
     
-    // Poll APIs every 5 seconds
+    // Update max Binance SELL volume (track historical maximum for future villain animations)
+    LaunchedEffect(binanceSellVolume) {
+        val currentSell = binanceSellVolume ?: 0.0
+        if (currentSell > 0.0 && (maxBinanceSellVolume == 0.0 || currentSell > maxBinanceSellVolume)) {
+            maxBinanceSellVolume = currentSell
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "New max Binance SELL Volume: $maxBinanceSellVolume (current: $currentSell)")
+            }
+        }
+    }
+    
+    // Update max Coinbase SELL volume (track historical maximum for future villain animations)
+    LaunchedEffect(coinbaseSellVolume) {
+        val currentSell = coinbaseSellVolume ?: 0.0
+        if (currentSell > 0.0 && (maxCoinbaseSellVolume == 0.0 || currentSell > maxCoinbaseSellVolume)) {
+            maxCoinbaseSellVolume = currentSell
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "New max Coinbase SELL Volume: $maxCoinbaseSellVolume (current: $currentSell)")
+            }
+        }
+    }
+    
+    // Connect WebSocket on composition
+    LaunchedEffect(Unit) {
+        if (useWebSocket) {
+            webSocketRepository.connect()
+        }
+    }
+    
+    // Elapsed timer: tick every second so HH:MM:SS recomputes; update overTenMin so flash effect is not cancelled every second
     LaunchedEffect(Unit) {
         while (true) {
-            // Fetch Binance price
-            repository.getBinancePrice().fold(
-                onSuccess = { price ->
-                    binancePreviousPrice = binancePrice
-                    binancePrice = price
-                    binanceIsConnected = true
-                },
-                onFailure = {
-                    binanceIsConnected = false
-                }
-            )
-            
-            // Fetch Coinbase price
-            repository.getCoinbasePrice().fold(
-                onSuccess = { price ->
-                    coinbasePreviousPrice = coinbasePrice
-                    coinbasePrice = price
-                    coinbaseIsConnected = true
-                },
-                onFailure = {
-                    coinbaseIsConnected = false
-                }
-            )
-            
-            // Fetch Binance volumes
-            repository.getBinanceVolumes().fold(
-                onSuccess = { (buy, sell) ->
-                    val oldBuy = binanceBuyVolume
-                    val oldSell = binanceSellVolume
-                    binanceBuyVolume = buy
-                    binanceSellVolume = sell
-                    if (ENABLE_EXCHANGE_LOGS) {
-                        Log.d("MainActivity", "Binance volumes updated - Buy: $buy (was $oldBuy), Sell: $sell (was $oldSell)")
+            delay(1000)
+            tick++
+            val elapsedMs = lastBlockHeightUpdateTimeMs?.let { System.currentTimeMillis() - it } ?: 0L
+            overTenMin = elapsedMs >= TIMER_FLASH_WHEN_ELAPSED_MS
+        }
+    }
+    
+    // When elapsed >= 10 min, flash timer 3 times every 30 seconds (keyed on overTenMin so effect is not cancelled every tick)
+    LaunchedEffect(overTenMin, lastBlockHeightUpdateTimeMs) {
+        if (!overTenMin) {
+            timerOverTenMinFlashOn = false
+            return@LaunchedEffect
+        }
+        while (true) {
+            val elapsedMs = lastBlockHeightUpdateTimeMs?.let { System.currentTimeMillis() - it } ?: 0L
+            if (elapsedMs < TIMER_FLASH_WHEN_ELAPSED_MS) {
+                timerOverTenMinFlashOn = false
+                return@LaunchedEffect
+            }
+            delay(TIMER_FLASH_INTERVAL_MS)
+            repeat(3) {
+                timerOverTenMinFlashOn = true
+                delay(BLOCK_HEIGHT_FLASH_HALF_MS)
+                timerOverTenMinFlashOn = false
+                delay(BLOCK_HEIGHT_FLASH_HALF_MS)
+            }
+        }
+    }
+    
+    // Block height update flash: 10 times when value changes (non-null)
+    LaunchedEffect(blockHeight) {
+        if (blockHeight == null) return@LaunchedEffect
+        repeat(10) {
+            blockHeightFlashOn = true
+            delay(BLOCK_HEIGHT_FLASH_HALF_MS)
+            blockHeightFlashOn = false
+            delay(BLOCK_HEIGHT_FLASH_HALF_MS)
+        }
+    }
+    
+    // Update state from WebSocket data
+    LaunchedEffect(binanceWebSocketData) {
+        if (useWebSocket && binanceWebSocketData.isConnected) {
+            binanceWebSocketData.price?.let { price ->
+                binancePreviousPrice = binancePrice
+                binancePrice = price
+            }
+            binanceIsConnected = binanceWebSocketData.isConnected
+            binanceBuyVolume = binanceWebSocketData.buyVolume
+            binanceSellVolume = binanceWebSocketData.sellVolume
+        }
+    }
+    
+    LaunchedEffect(coinbaseWebSocketData) {
+        if (useWebSocket && coinbaseWebSocketData.isConnected) {
+            coinbaseWebSocketData.price?.let { price ->
+                coinbasePreviousPrice = coinbasePrice
+                coinbasePrice = price
+            }
+            coinbaseIsConnected = coinbaseWebSocketData.isConnected
+            coinbaseBuyVolume = coinbaseWebSocketData.buyVolume
+            coinbaseSellVolume = coinbaseWebSocketData.sellVolume
+        }
+    }
+    
+    // Poll APIs every 5 seconds as fallback (only if WebSocket is disabled or not connected)
+    LaunchedEffect(useWebSocket, binanceWebSocketData.isConnected, coinbaseWebSocketData.isConnected) {
+        if (!useWebSocket || (!binanceWebSocketData.isConnected && !coinbaseWebSocketData.isConnected)) {
+            while (true) {
+                // Fetch Binance price
+                repository.getBinancePrice().fold(
+                    onSuccess = { price ->
+                        binancePreviousPrice = binancePrice
+                        binancePrice = price
+                        binanceIsConnected = true
+                    },
+                    onFailure = {
+                        binanceIsConnected = false
                     }
-                },
-                onFailure = { e ->
-                    if (ENABLE_EXCHANGE_LOGS) {
-                        Log.e("MainActivity", "Failed to fetch Binance volumes: ${e.message}", e)
+                )
+                
+                // Fetch Coinbase price
+                repository.getCoinbasePrice().fold(
+                    onSuccess = { price ->
+                        coinbasePreviousPrice = coinbasePrice
+                        coinbasePrice = price
+                        coinbaseIsConnected = true
+                    },
+                    onFailure = {
+                        coinbaseIsConnected = false
                     }
-                    binanceBuyVolume = null
-                    binanceSellVolume = null
-                }
-            )
-            
-            // Fetch Coinbase volumes
-            repository.getCoinbaseVolumes().fold(
-                onSuccess = { (buy, sell) ->
-                    val oldBuy = coinbaseBuyVolume
-                    val oldSell = coinbaseSellVolume
-                    coinbaseBuyVolume = buy
-                    coinbaseSellVolume = sell
-                    if (ENABLE_EXCHANGE_LOGS) {
-                        Log.d("MainActivity", "Coinbase volumes updated - Buy: $buy (was $oldBuy), Sell: $sell (was $oldSell)")
+                )
+                
+                // Fetch Binance volumes
+                repository.getBinanceVolumes().fold(
+                    onSuccess = { (buy, sell) ->
+                        val oldBuy = binanceBuyVolume
+                        val oldSell = binanceSellVolume
+                        binanceBuyVolume = buy
+                        binanceSellVolume = sell
+                        if (ENABLE_EXCHANGE_LOGS) {
+                            Log.d("MainActivity", "Binance volumes updated - Buy: $buy (was $oldBuy), Sell: $sell (was $oldSell)")
+                        }
+                    },
+                    onFailure = { e ->
+                        if (ENABLE_EXCHANGE_LOGS) {
+                            Log.e("MainActivity", "Failed to fetch Binance volumes: ${e.message}", e)
+                        }
+                        binanceBuyVolume = null
+                        binanceSellVolume = null
                     }
-                },
-                onFailure = { e ->
-                    if (ENABLE_EXCHANGE_LOGS) {
-                        Log.e("MainActivity", "Failed to fetch Coinbase volumes: ${e.message}", e)
+                )
+                
+                // Fetch Coinbase volumes
+                repository.getCoinbaseVolumes().fold(
+                    onSuccess = { (buy, sell) ->
+                        val oldBuy = coinbaseBuyVolume
+                        val oldSell = coinbaseSellVolume
+                        coinbaseBuyVolume = buy
+                        coinbaseSellVolume = sell
+                        if (ENABLE_EXCHANGE_LOGS) {
+                            Log.d("MainActivity", "Coinbase volumes updated - Buy: $buy (was $oldBuy), Sell: $sell (was $oldSell)")
+                        }
+                    },
+                    onFailure = { e ->
+                        if (ENABLE_EXCHANGE_LOGS) {
+                            Log.e("MainActivity", "Failed to fetch Coinbase volumes: ${e.message}", e)
+                        }
+                        coinbaseBuyVolume = null
+                        coinbaseSellVolume = null
                     }
-                    coinbaseBuyVolume = null
-                    coinbaseSellVolume = null
-                }
-            )
-            
-            delay(5000) // 5 seconds
+                )
+                
+                delay(5000) // 5 seconds
+            }
         }
     }
     
     // Manage all sprites in a list
     val sprites = remember { mutableStateListOf<SpriteData>() }
     
-    // Global cooldown: disables all spawning for 3 seconds after any clone is spawned
-    var lastGlobalCloneSpawnTime by remember { mutableStateOf(0L) }
+    // Track punch state for Satoshi
+    var currentLeftPunch by remember { mutableStateOf<PunchType?>(null) }
+    var currentRightPunch by remember { mutableStateOf<PunchType?>(null) }
     
-    // Global dragging state: tracks which sprite is currently being dragged (only one at a time)
-    var currentlyDraggedSprite by remember { mutableStateOf<SpriteState?>(null) }
+    // Queue for pending punches (lower priority)
+    // Track last punch time per punch type for cooldown management
+    var lastPunchTime by remember { 
+        mutableStateOf<Map<PunchType, Long>>(emptyMap()) 
+    }
     
-    // Track Fiat USD sprites to remove (after 4th Bitcoin collision)
-    val spritesToRemove = remember { mutableSetOf<SpriteData>() }
+    // Track current defense type and switch time for defense cooldown
+    var lastDefenseType by remember { mutableStateOf<DefenseType?>(null) }
+    var lastDefenseSwitchTime by remember { mutableStateOf(0L) }
+    var lastDefenseCompletionTime by remember { mutableStateOf(0L) }
     
-    // Track screen size for spawning and centering sprites (cat, Fiat USD)
-    var screenSizeForSpawn by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
+    // Track punch/defense state for Lizard (villain - uses SELL volume)
+    var currentLizardLeftPunch by remember { mutableStateOf<PunchType?>(null) }
+    var currentLizardRightPunch by remember { mutableStateOf<PunchType?>(null) }
+    var lastLizardPunchTime by remember { mutableStateOf<Map<PunchType, Long>>(emptyMap()) }
+    var lastLizardDefenseType by remember { mutableStateOf<DefenseType?>(null) }
+    var lastLizardDefenseSwitchTime by remember { mutableStateOf(0L) }
+    var lastLizardDefenseCompletionTime by remember { mutableStateOf(0L) }
     
-    // Initialize original sprites if list is empty
+    // Damage system: boxer in damage = show damage animation (skip for now), pause both bobbing
+    var satoshiInDamage by remember { mutableStateOf(false) }
+    var satoshiDamageType by remember { mutableStateOf<DamageAnimationType?>(null) }
+    var lizardInDamage by remember { mutableStateOf(false) }
+    var lizardDamageType by remember { mutableStateOf<DamageAnimationType?>(null) }
+    // Damage bar 0-100; KO sequence when >= 100
+    var satoshiDamagePoints by remember { mutableStateOf(0) }
+    var lizardDamagePoints by remember { mutableStateOf(0) }
+    var satoshiKOPhase by remember { mutableStateOf<KOPhase?>(null) }
+    var lizardKOPhase by remember { mutableStateOf<KOPhase?>(null) }
+
+    // Bitcoin block height: poll Mempool.space once per minute; reset elapsed timer only when value changes
     LaunchedEffect(Unit) {
-        if (sprites.isEmpty()) {
-            val sprite1State = SpriteState()
-            val sprite2State = SpriteState()
-            
-            sprites.add(
-                SpriteData(
-                    spriteState = sprite1State,
-                    spriteResourceId = R.drawable.bitcoin_orange_sprite,
-                    speedMultiplier = binanceSpeedMultiplier,
-                    isOriginal = true,
-                    spriteType = SpriteType.BITCOIN_ORANGE
-                )
-            )
-            sprites.add(
-                SpriteData(
-                    spriteState = sprite2State,
-                    spriteResourceId = R.drawable.bitcoin_sprite,
-                    speedMultiplier = coinbaseSpeedMultiplier,
-                    isOriginal = true,
-                    spriteType = SpriteType.BITCOIN
-                )
-            )
-        }
-    }
-    
-    // Initialize cat sprite at app start (center of screen)
-    LaunchedEffect(screenSizeForSpawn.width, screenSizeForSpawn.height) {
-        if (screenSizeForSpawn.width > 0f && screenSizeForSpawn.height > 0f) {
-            // Check if cat sprite already exists
-            val catCount = sprites.count { it.spriteType == SpriteType.CAT }
-            
-            if (catCount < MAX_CAT_SPRITES) {
-                val catState = SpriteState()
-                val baseSpeed = CAT_BASE_SPEED
-                val catSpeedMultiplier = CAT_SPEED_MULTIPLIER
-                val effectiveSpeed = baseSpeed * catSpeedMultiplier
-                
-                // Position at center of screen
-                val spriteSizeDp = 64f
-                val density = android.content.res.Resources.getSystem().displayMetrics.density
-                val spriteSizePx = spriteSizeDp * density
-                val centerX = (screenSizeForSpawn.width - spriteSizePx) / 2f
-                val centerY = (screenSizeForSpawn.height - spriteSizePx) / 2f
-                
-                catState.position = Offset(centerX, centerY)
-                
-                // Initialize with random direction velocity using seeded random for true randomization
-                val random = Random(System.currentTimeMillis())
-                val randomAngle = random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                val initialVel = Offset(
-                    effectiveSpeed * kotlin.math.cos(randomAngle),
-                    effectiveSpeed * kotlin.math.sin(randomAngle)
-                )
-                catState.velocity = initialVel
-                
-                // Create cat sprite
-                val catSprite = SpriteData(
-                    spriteState = catState,
-                    spriteResourceId = R.drawable.e_cat_down_1, // Default frame (animation handled in composable)
-                    speedMultiplier = catSpeedMultiplier,
-                    isOriginal = true,
-                    spriteType = SpriteType.CAT,
-                    lastCloneSpawnTime = 0L,
-                    sizeScale = 1.0f,
-                    bitcoinCollisionCount = 0,
-                    lastShrinkCooldownTime = 0L
-                )
-                
-                sprites.add(catSprite)
-            }
-        }
-    }
-    
-    // Update speed multipliers for existing sprites
-    LaunchedEffect(binanceSpeedMultiplier, coinbaseSpeedMultiplier) {
-        sprites.forEach { sprite ->
-            when (sprite.spriteType) {
-                SpriteType.BITCOIN_ORANGE -> {
-                    val index = sprites.indexOf(sprite)
-                    if (index >= 0) {
-                        sprites[index] = sprite.copy(speedMultiplier = binanceSpeedMultiplier)
-                    }
-                }
-                SpriteType.BITCOIN -> {
-                    val index = sprites.indexOf(sprite)
-                    if (index >= 0) {
-                        sprites[index] = sprite.copy(speedMultiplier = coinbaseSpeedMultiplier)
-                    }
-                }
-                SpriteType.FIAT_USD -> {
-                    // Fiat USD uses fixed speed multiplier of 1.0f
-                    val index = sprites.indexOf(sprite)
-                    if (index >= 0) {
-                        sprites[index] = sprite.copy(speedMultiplier = 1.0f)
-                    }
-                }
-                SpriteType.CAT -> {
-                    // Cat uses fixed speed multiplier
-                    val index = sprites.indexOf(sprite)
-                    if (index >= 0) {
-                        sprites[index] = sprite.copy(speedMultiplier = CAT_SPEED_MULTIPLIER)
-                    }
-                }
-            }
-        }
-    }
-    
-    // Fiat USD spawning logic: spawn when sell volume >= 50% of total volume
-    LaunchedEffect(binanceSellVolume, coinbaseSellVolume, binanceBuyVolume, coinbaseBuyVolume) {
-        delay(5000) // Wait for initial volume data
-        
         while (true) {
-            // Wait for screen size to be available
-            if (screenSizeForSpawn.width > 0f && screenSizeForSpawn.height > 0f) {
-                // Calculate total volume
-                val totalVolume = (binanceBuyVolume ?: 0.0) + (binanceSellVolume ?: 0.0) + 
-                                  (coinbaseBuyVolume ?: 0.0) + (coinbaseSellVolume ?: 0.0)
-                
-                // Check if sell volume >= 50% of total
-                val binanceSellRatio = if (totalVolume > 0) (binanceSellVolume ?: 0.0) / totalVolume else 0.0
-                val coinbaseSellRatio = if (totalVolume > 0) (coinbaseSellVolume ?: 0.0) / totalVolume else 0.0
-                val shouldSpawn = binanceSellRatio >= 0.5 || coinbaseSellRatio >= 0.5
-                
-                // Count existing Fiat USD sprites
-                val fiatUsdCount = sprites.count { it.spriteType == SpriteType.FIAT_USD }
-                
-                // Spawn if condition met and below max count
-                if (shouldSpawn && fiatUsdCount < MAX_FIAT_USD_SPRITES) {
-                    // Calculate sprite size in pixels (assuming default density)
-                    val spriteSizeDp = 64f
-                    val density = android.content.res.Resources.getSystem().displayMetrics.density
-                    val spriteSizePx = spriteSizeDp * density
-                    val spawnLocation = findEmptySpawnLocation(screenSizeForSpawn, spriteSizePx, sprites.toList())
-                    
-                    if (spawnLocation != null) {
-                        val fiatState = SpriteState()
-                        val baseSpeed = 3f
-                        val effectiveSpeed = baseSpeed * 1.0f // Fixed speed for Fiat USD
-                        
-                        // Set spawn position
-                        fiatState.position = spawnLocation
-                        
-                        // Initialize with random direction velocity
-                        val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                        val initialVel = Offset(
-                            effectiveSpeed * kotlin.math.cos(randomAngle),
-                            effectiveSpeed * kotlin.math.sin(randomAngle)
-                        )
-                        fiatState.velocity = initialVel
-                        
-                        // Create Fiat USD sprite
-                        val fiatSprite = SpriteData(
-                            spriteState = fiatState,
-                            spriteResourceId = R.drawable.fiat_usd,
-                            speedMultiplier = 1.0f,
-                            isOriginal = false,
-                            spriteType = SpriteType.FIAT_USD,
-                            lastCloneSpawnTime = 0L,
-                            sizeScale = 1.0f,
-                            bitcoinCollisionCount = 0,
-                            lastShrinkCooldownTime = 0L
-                        )
-                        
-                        sprites.add(fiatSprite)
-                    }
+            repository.getBlockTipHeight().onSuccess { newHeight ->
+                val valueChanged = (blockHeight != newHeight)
+                blockHeight = newHeight
+                if (valueChanged) {
+                    lastBlockHeightUpdateTimeMs = System.currentTimeMillis()
+                    val noKo = satoshiKOPhase == null && lizardKOPhase == null
+                    val notRotating = !isRingRotating
+                    if (!TEST_RING_ROTATION && noKo && notRotating) ringRotationTriggerCount++
+                    if (!SPAWN_CAT && !sprites.any { it.spriteType == SpriteType.CAT }) catSpawnTriggerCount++
                 }
             }
-            
-            delay(5000) // Check every 5 seconds (same as API polling)
+            delay(BLOCK_HEIGHT_REFRESH_INTERVAL_MS)
+        }
+    }
+
+    // Test mode: trigger ring rotation on a timer instead of block height
+    LaunchedEffect(TEST_RING_ROTATION) {
+        if (!TEST_RING_ROTATION) return@LaunchedEffect
+        while (true) {
+            delay(RING_ROTATE_FREQUENCY_MS)
+            val noKo = satoshiKOPhase == null && lizardKOPhase == null
+            val notRotating = !isRingRotating
+            if (noKo && notRotating) ringRotationTriggerCount++
+        }
+    }
+
+    // Cat spawn on timer when SPAWN_CAT true
+    LaunchedEffect(SPAWN_CAT) {
+        if (!SPAWN_CAT) return@LaunchedEffect
+        while (true) {
+            delay(CAT_SPAWN_INTERVAL_MS)
+            if (!sprites.any { it.spriteType == SpriteType.CAT }) catSpawnTriggerCount++
+        }
+    }
+
+    // Run one ring rotation when trigger fires (block height update or test timer)
+    LaunchedEffect(ringRotationTriggerCount) {
+        if (ringRotationTriggerCount == 0 || isRingRotating || RING_FRAMES.size < 2) return@LaunchedEffect
+        isRingRotating = true
+        try {
+            val right = when (RING_ROTATE_DIRECTION) {
+                RingRotateDirection.Random -> kotlin.random.Random.nextBoolean()
+                RingRotateDirection.Right -> true
+                RingRotateDirection.Left -> false
+            }
+            val lastRotationFrame = RING_FRAMES.size - 1
+            val sequence = if (right) (1..lastRotationFrame).toList() else (lastRotationFrame downTo 1).toList()
+            for (frame in sequence) {
+                backgroundFrameIndices = listOf(
+                    frame,
+                    backgroundFrameIndices.getOrElse(1) { 0 },
+                    backgroundFrameIndices.getOrElse(2) { 0 }
+                )
+                var elapsed = 0L
+                while (elapsed < RING_ROTATION_FRAME_DELAY_MS) {
+                    delay(50)
+                    if (satoshiKOPhase == null && lizardKOPhase == null) elapsed += 50
+                }
+            }
+            backgroundFrameIndices = listOf(
+                0,
+                backgroundFrameIndices.getOrElse(1) { 0 },
+                backgroundFrameIndices.getOrElse(2) { 0 }
+            )
+        } finally {
+            isRingRotating = false
+        }
+    }
+
+    // Audience (bg3): loop frames 0 -> 1 -> 2 -> 0 within current ring set at AUDIENCE_FRAME_DELAY_MS
+    LaunchedEffect(AUDIENCE_FRAMES_BY_RING.isNotEmpty()) {
+        if (AUDIENCE_FRAMES_BY_RING.isEmpty()) return@LaunchedEffect
+        while (true) {
+            delay(AUDIENCE_FRAME_DELAY_MS)
+            val next = (backgroundFrameIndices.getOrElse(2) { 0 } + 1) % 3
+            backgroundFrameIndices = listOf(
+                backgroundFrameIndices.getOrElse(0) { 0 },
+                backgroundFrameIndices.getOrElse(1) { 0 },
+                next
+            )
+        }
+    }
+
+    // bg2 signs: clear all when ring frame index changes
+    LaunchedEffect(backgroundFrameIndices) {
+        val ring = backgroundFrameIndices.getOrElse(0) { 0 }
+        if (ring != lastRingFrameIndex) {
+            signSpawns = emptyList()
+            lastRingFrameIndex = ring
+        }
+    }
+
+    // Pending impact check: run hit detection once at 2nd-last frame
+    var pendingSatoshiImpactCheck by remember { mutableStateOf<ImpactCheckData?>(null) }
+    var pendingLizardImpactCheck by remember { mutableStateOf<ImpactCheckData?>(null) }
+    // Deferred damage when hit during wrong block (defense plays to completion, then damage applied)
+    var pendingSatoshiDamageAfterDefense by remember { mutableStateOf<DamageAnimationType?>(null) }
+    var pendingLizardDamageAfterDefense by remember { mutableStateOf<DamageAnimationType?>(null) }
+    var pendingSatoshiDamagePunchType by remember { mutableStateOf<PunchType?>(null) }
+    var pendingLizardDamagePunchType by remember { mutableStateOf<PunchType?>(null) }
+    // Bobbing movement (boxers move left/right gradually, in opposite directions)
+    var movementOffsetX by remember { mutableStateOf(0f) }
+    var movementDirection by remember { mutableStateOf(1) }  // 1 = right, -1 = left
+    // Y bobbing (both move up/down together - simulates engaging/disengaging)
+    var movementOffsetY by remember { mutableStateOf(0f) }
+    var movementDirectionY by remember { mutableStateOf(1) }  // 1 = down, -1 = up
+    
+    LaunchedEffect(satoshiInDamage, lizardInDamage, satoshiKOPhase, lizardKOPhase) {
+        while (true) {
+            delay(BOBBING_INTERVAL_MS)
+            // Pause bobbing when either boxer is in damage or KO sequence
+            if (satoshiInDamage || lizardInDamage || satoshiKOPhase != null || lizardKOPhase != null) continue
+            movementOffsetX += movementDirection * BOBBING_STEP_PX
+            when {
+                movementOffsetX >= BOBBING_MAX_X_RIGHT -> {
+                    movementOffsetX = BOBBING_MAX_X_RIGHT
+                    movementDirection = -1
+                }
+                movementOffsetX <= BOBBING_MAX_X_LEFT -> {
+                    movementOffsetX = BOBBING_MAX_X_LEFT
+                    movementDirection = 1
+                }
+            }
+            movementOffsetY += movementDirectionY * BOBBING_STEP_PX
+            when {
+                movementOffsetY >= BOBBING_MAX_Y_DOWN -> {
+                    movementOffsetY = BOBBING_MAX_Y_DOWN
+                    movementDirectionY = -1
+                }
+                movementOffsetY <= BOBBING_MAX_Y_UP -> {
+                    movementOffsetY = BOBBING_MAX_Y_UP
+                    movementDirectionY = 1
+                }
+            }
         }
     }
     
-    // Function to create a clone
-    val onCloneRequest: (SpriteData, SpriteData, Offset) -> Unit = { sprite1, sprite2, collisionPoint ->
-        // Determine clone type based on colliding sprite types
-        val cloneType = when {
-            sprite1.spriteType == sprite2.spriteType -> sprite1.spriteType
-            else -> if (kotlin.random.Random.nextBoolean()) sprite1.spriteType else sprite2.spriteType
+    // Determine punch types from BUY volumes
+    LaunchedEffect(ENABLE_PUNCHING, binanceBuyVolume, coinbaseBuyVolume, maxBinanceBuyVolume, maxCoinbaseBuyVolume) {
+        if (ENABLE_PUNCH_LOGS) {
+            Log.d("PunchDebug", "=== PUNCH STATE UPDATE LaunchedEffect RUNNING ===")
+            Log.d("PunchDebug", "Inputs - Binance BUY: $binanceBuyVolume (max: $maxBinanceBuyVolume), Coinbase BUY: $coinbaseBuyVolume (max: $maxCoinbaseBuyVolume)")
+            Log.d("PunchDebug", "Current State - Left: $currentLeftPunch, Right: $currentRightPunch")
         }
         
-        // Count sprites of this type
-        val count = sprites.count { it.spriteType == cloneType }
-        if (count < MAX_BITCOIN_SPRITES_PER_TYPE) { // Allows up to MAX_BITCOIN_SPRITES_PER_TYPE per type
-            val cloneState = SpriteState()
-            val baseSpeed = if (cloneType == SpriteType.CAT) CAT_BASE_SPEED else 3f
-            
-            // Determine speed multiplier based on clone type
-            val cloneSpeedMultiplier = when (cloneType) {
-                SpriteType.BITCOIN_ORANGE -> binanceSpeedMultiplier
-                SpriteType.BITCOIN -> coinbaseSpeedMultiplier
-                SpriteType.FIAT_USD -> 1.0f // Fixed speed for Fiat USD
-                SpriteType.CAT -> CAT_SPEED_MULTIPLIER
+        if (!ENABLE_PUNCHING) {
+            currentLeftPunch = null
+            currentRightPunch = null
+        } else {
+            // Update left hand punch (Binance BUY volume) - uses Binance's own max
+            val newLeftPunch = getPunchTypeFromVolume(binanceBuyVolume, maxBinanceBuyVolume)
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "Left punch determined: $newLeftPunch (was: $currentLeftPunch)")
             }
-            val effectiveSpeed = baseSpeed * cloneSpeedMultiplier
+            if (ENABLE_PUNCH_LOGS && newLeftPunch != currentLeftPunch) {
+                Log.d("PunchDebug", "LEFT PUNCH CHANGED - Binance BUY: ${binanceBuyVolume}, maxBinanceBuyVolume: $maxBinanceBuyVolume, old: $currentLeftPunch, new: $newLeftPunch")
+            }
+            currentLeftPunch = newLeftPunch
             
-            // Calculate random direction from collision point
-            val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-            val cloneVelocity = Offset(
-                effectiveSpeed * kotlin.math.cos(randomAngle),
-                effectiveSpeed * kotlin.math.sin(randomAngle)
+            // Update right hand punch (Coinbase BUY volume) - uses Coinbase's own max
+            val newRightPunch = getPunchTypeFromVolume(coinbaseBuyVolume, maxCoinbaseBuyVolume)
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "Right punch determined: $newRightPunch (was: $currentRightPunch)")
+            }
+            if (ENABLE_PUNCH_LOGS && newRightPunch != currentRightPunch) {
+                Log.d("PunchDebug", "RIGHT PUNCH CHANGED - Coinbase BUY: ${coinbaseBuyVolume}, maxCoinbaseBuyVolume: $maxCoinbaseBuyVolume, old: $currentRightPunch, new: $newRightPunch")
+            }
+            currentRightPunch = newRightPunch
+        }
+        
+        if (ENABLE_PUNCH_LOGS) {
+            Log.d("PunchDebug", "=== PUNCH STATE UPDATE COMPLETE - Left: $currentLeftPunch, Right: $currentRightPunch ===")
+        }
+    }
+    
+    // Determine Lizard punch types from SELL volumes (villain mirrors hero)
+    LaunchedEffect(ENABLE_PUNCHING, binanceSellVolume, coinbaseSellVolume, maxBinanceSellVolume, maxCoinbaseSellVolume) {
+        if (!ENABLE_PUNCHING) {
+            currentLizardLeftPunch = null
+            currentLizardRightPunch = null
+        } else {
+            currentLizardLeftPunch = getPunchTypeFromVolume(binanceSellVolume, maxBinanceSellVolume)
+            currentLizardRightPunch = getPunchTypeFromVolume(coinbaseSellVolume, maxCoinbaseSellVolume)
+        }
+    }
+    
+    // Update Satoshi sprite based on punch state
+    LaunchedEffect(currentLeftPunch, currentRightPunch, sprites, binanceBuyVolume, coinbaseBuyVolume, maxBinanceBuyVolume, maxCoinbaseBuyVolume, lastPunchTime, isBinanceDefense, lastDefenseType, lastDefenseSwitchTime, lastDefenseCompletionTime, satoshiInDamage, satoshiKOPhase, lizardKOPhase) {
+        // Block punch/defense updates while in damage or KO sequence
+        if (satoshiKOPhase != null) {
+            // #region agent log
+            agentLog("MainActivity:SatoshiSpriteUpdate", "early_return_ko", "{\"satoshiKOPhase\":\"$satoshiKOPhase\"}", "H1")
+            // #endregion
+            return@LaunchedEffect
+        }
+        // Opponent (Lizard) in KO - Satoshi stays idle, no punching
+        if (lizardKOPhase != null) {
+            val s = sprites.find { it.spriteType == SpriteType.SATOSHI }
+            if (s != null && (s.currentPunchType != null || s.isPunching || s.animationFrames != SATOSHI_IDLE_FRAMES)) {
+                val idx = sprites.indexOf(s)
+                sprites[idx] = s.copy(
+                    animationFrames = SATOSHI_IDLE_FRAMES, currentFrameIndex = 0, isAnimated = true,
+                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                    currentDefenseType = null, isDefending = false, sizeScale = SATOSHI_SCALE
+                )
+            }
+            return@LaunchedEffect
+        }
+        if (satoshiInDamage) {
+            if (DAMAGE_DEBUG) {
+                Log.d("DamageDebug", "{\"h\":\"D\",\"loc\":\"satoshi_sprite_update_early_return\",\"ts\":${System.currentTimeMillis()}}")
+            }
+            return@LaunchedEffect
+        }
+        // Clear defense cooldown state when leaving defense mode or when dodging disabled
+        if (!isBinanceDefense || !ENABLE_DODGING) {
+            lastDefenseType = null
+            lastDefenseSwitchTime = 0L
+            lastDefenseCompletionTime = 0L
+        }
+        
+        if (ENABLE_PUNCH_LOGS) {
+            Log.d("PunchDebug", "=== SPRITE UPDATE LaunchedEffect RUNNING ===")
+            Log.d("PunchDebug", "Punch State - Left: $currentLeftPunch, Right: $currentRightPunch")
+            Log.d("PunchDebug", "Volumes - Binance: $binanceBuyVolume, Coinbase: $coinbaseBuyVolume")
+        }
+        
+        val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+        if (satoshiSprite == null) {
+            if (ENABLE_PUNCH_LOGS) {
+                Log.w("PunchDebug", "Satoshi sprite not found in sprites list (size: ${sprites.size})")
+            }
+            return@LaunchedEffect
+        }
+        
+        val index = sprites.indexOf(satoshiSprite)
+
+        // If currently defending, wait for completion (return early)
+        if (satoshiSprite.isDefending) {
+            if (ENABLE_BLOCKING_LOGS) {
+                Log.d("BlockingDebug", "Currently defending - waiting for completion")
+            }
+            return@LaunchedEffect
+        }
+
+        // If Binance defense is active and dodging enabled, use defense animations (with cooldown)
+        // Require minimum idle after defense completes before re-entering defense
+        if (ENABLE_DODGING && isBinanceDefense &&
+            (lastDefenseCompletionTime == 0L || (System.currentTimeMillis() - lastDefenseCompletionTime) >= MIN_IDLE_AFTER_DEFENSE_MS)) {
+            val newDefenseType = getDefenseTypeFromVolume(
+                binanceBuyVolume,
+                coinbaseBuyVolume,
+                maxBinanceBuyVolume,
+                maxCoinbaseBuyVolume
             )
             
-            // Set clone position to collision point (already adjusted to top-left corner)
-            cloneState.position = collisionPoint
-            cloneState.velocity = cloneVelocity
+            val onCooldown = lastDefenseType != null &&
+                    newDefenseType != lastDefenseType &&
+                    isDefenseOnCooldown(lastDefenseType, lastDefenseSwitchTime)
             
-            // Determine sprite resource ID based on clone type
-            val cloneResourceId = when (cloneType) {
-                SpriteType.BITCOIN_ORANGE -> R.drawable.bitcoin_orange_sprite
-                SpriteType.BITCOIN -> R.drawable.bitcoin_sprite
-                SpriteType.FIAT_USD -> R.drawable.fiat_usd
-                SpriteType.CAT -> R.drawable.e_cat_down_1 // Default frame (animation handled in composable)
+            val effectiveType = if (onCooldown) lastDefenseType else newDefenseType
+            
+            if (ENABLE_BLOCKING_LOGS && onCooldown) {
+                Log.d("BlockingDebug", "Defense cooldown - keeping $lastDefenseType, rejected switch to $newDefenseType")
             }
             
-            val currentTime = System.currentTimeMillis()
+            val defenseFrames = when (effectiveType) {
+                DefenseType.HEAD_BLOCK -> SATOSHI_HEAD_BLOCK_FRAMES
+                DefenseType.BODY_BLOCK -> SATOSHI_BODY_BLOCK_FRAMES
+                DefenseType.DODGE_LEFT -> SATOSHI_DODGE_LEFT_FRAMES
+                DefenseType.DODGE_RIGHT -> SATOSHI_DODGE_RIGHT_FRAMES
+                null -> emptyList() // No defense frames when there is no defense type
+            }
             
-            // Create clone with cooldown timestamp set to current time
-            val clone = SpriteData(
-                spriteState = cloneState,
-                spriteResourceId = cloneResourceId,
-                speedMultiplier = cloneSpeedMultiplier,
-                isOriginal = false,
-                spriteType = cloneType,
-                lastCloneSpawnTime = currentTime
+            // If this defense type has no frames, fall back to idle only when not defending and not right after defense started (avoids flicker)
+            if (defenseFrames.isEmpty()) {
+                if (satoshiSprite.isDefending) {
+                    if (ENABLE_BLOCKING_LOGS) {
+                        Log.d("BlockingDebug", "Defense type null but currently defending - waiting for completion to clear")
+                    }
+                    return@LaunchedEffect
+                }
+                val timeSinceDefenseSwitch = System.currentTimeMillis() - lastDefenseSwitchTime
+                if (lastDefenseType != null && timeSinceDefenseSwitch < MIN_IDLE_AFTER_DEFENSE_MS) {
+                    if (ENABLE_BLOCKING_LOGS) {
+                        Log.d("BlockingDebug", "Defense type null but recently in defense (${timeSinceDefenseSwitch}ms) - skip clear to avoid flicker")
+                    }
+                    return@LaunchedEffect
+                }
+                // Already idle: don't reset sprite (avoids idle animation restart flicker)
+                if (satoshiSprite.animationFrames == SATOSHI_IDLE_FRAMES && satoshiSprite.currentDefenseType == null && !satoshiSprite.isDefending) {
+                    return@LaunchedEffect
+                }
+                if (ENABLE_BLOCKING_LOGS) {
+                    Log.w("BlockingDebug", "Defense type $effectiveType has no frames - falling back to idle")
+                }
+                if (ENABLE_BLOCKING_LOGS) Log.d("DefenseClear", "{\"source\":\"empty_frames\",\"ts\":${System.currentTimeMillis()}}")
+                sprites[index] = satoshiSprite.copy(
+                    animationFrames = SATOSHI_IDLE_FRAMES,
+                    currentFrameIndex = 0,
+                    isAnimated = true,
+                    currentPunchType = null,
+                    currentHandSide = null,
+                    isPunching = false,
+                    playAnimationOnce = false,
+                    currentDefenseType = null,
+                    isDefending = false,
+                    sizeScale = SATOSHI_SCALE
+                )
+                return@LaunchedEffect
+            }
+            
+            // Only set isDefending = true when starting a NEW defense animation (defense type changed)
+            val isNewDefense = satoshiSprite.currentDefenseType != effectiveType
+            
+            if (ENABLE_BLOCKING_LOGS && !onCooldown) {
+                val binancePct = binanceBuyVolume?.let { b -> if (maxBinanceBuyVolume > 0.0) "%.2f".format((b / maxBinanceBuyVolume) * 100) else "N/A" } ?: "N/A"
+                val coinbasePct = coinbaseBuyVolume?.let { c -> if (maxCoinbaseBuyVolume > 0.0) "%.2f".format((c / maxCoinbaseBuyVolume) * 100) else "N/A" } ?: "N/A"
+                Log.d("BlockingDebug", "Defense sequence activated - type: $effectiveType, Binance BUY %: $binancePct%, Coinbase BUY %: $coinbasePct%, frames: ${defenseFrames.size}, isNewDefense: $isNewDefense")
+            }
+            
+            sprites[index] = satoshiSprite.copy(
+                animationFrames = defenseFrames,
+                currentFrameIndex = 0,
+                isAnimated = defenseFrames.isNotEmpty(),
+                currentPunchType = null,
+                currentHandSide = null,
+                isPunching = false,
+                playAnimationOnce = true,
+                currentDefenseType = effectiveType,
+                isDefending = if (isNewDefense) true else satoshiSprite.isDefending,
+                sizeScale = SATOSHI_SCALE
             )
             
-            // Add clone to list
-            sprites.add(clone)
-            
-            // Set global cooldown: disable all spawning for 3 seconds
-            lastGlobalCloneSpawnTime = currentTime
-            
-            // Update parent sprites' cooldown timestamps in the list
-            val sprite1Index = sprites.indexOfFirst { it.spriteState == sprite1.spriteState }
-            val sprite2Index = sprites.indexOfFirst { it.spriteState == sprite2.spriteState }
-            
-            if (sprite1Index >= 0) {
-                sprites[sprite1Index] = sprites[sprite1Index].copy(lastCloneSpawnTime = currentTime)
+            if (!onCooldown) {
+                lastDefenseType = effectiveType
+                lastDefenseSwitchTime = System.currentTimeMillis()
             }
-            if (sprite2Index >= 0) {
-                sprites[sprite2Index] = sprites[sprite2Index].copy(lastCloneSpawnTime = currentTime)
+            return@LaunchedEffect
+        }
+        
+        // If currently punching, wait for completion (return early)
+        if (satoshiSprite.isPunching) {
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "Currently punching - waiting for completion")
+            }
+            return@LaunchedEffect
+        }
+        
+        // If animation completed but sprite still has punch state, clear it
+        if (!satoshiSprite.isPunching && satoshiSprite.currentPunchType != null) {
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "Animation completed - clearing punch state and transitioning to idle")
+            }
+            if (ENABLE_BLOCKING_LOGS) Log.d("DefenseClear", "{\"source\":\"punch_state_clear\",\"ts\":${System.currentTimeMillis()}}")
+            sprites[index] = satoshiSprite.copy(
+                animationFrames = SATOSHI_IDLE_FRAMES,
+                currentFrameIndex = 0,
+                currentPunchType = null,
+                currentHandSide = null,
+                isPunching = false,
+                currentDefenseType = null,
+                isDefending = false,
+                sizeScale = SATOSHI_SCALE
+            )
+            return@LaunchedEffect
+        }
+        
+        // Check idle conditions first
+        val shouldPlayIdle = (currentLeftPunch == null && currentRightPunch == null) || 
+                             areAllPunchesOnCooldown(lastPunchTime)
+        
+        if (shouldPlayIdle) {
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "Playing idle animation - no punches or all on cooldown")
+            }
+            // Update sprite to idle animation
+            if (satoshiSprite.currentPunchType != null || satoshiSprite.isPunching || 
+                satoshiSprite.animationFrames != SATOSHI_IDLE_FRAMES) {
+                if (satoshiSprite.isDefending && ENABLE_BLOCKING_LOGS) Log.d("DefenseClear", "{\"source\":\"idle\",\"ts\":${System.currentTimeMillis()}}")
+                sprites[index] = satoshiSprite.copy(
+                    animationFrames = SATOSHI_IDLE_FRAMES,
+                    currentFrameIndex = 0,
+                    isAnimated = true,
+                    currentPunchType = null,
+                    currentHandSide = null,
+                    isPunching = false,
+                    currentDefenseType = null,
+                    isDefending = false,
+                    sizeScale = SATOSHI_SCALE
+                )
+            }
+            return@LaunchedEffect
+        }
+
+        // Determine which punch to execute based on priority
+        val punchToExecute = when {
+            currentLeftPunch != null && currentRightPunch != null -> {
+                // Both active - use priority hand
+                if (PUNCH_PRIORITY_HAND == HandSide.LEFT) {
+                    Pair(HandSide.LEFT, currentLeftPunch!!)
+                } else {
+                    Pair(HandSide.RIGHT, currentRightPunch!!)
+                }
+            }
+            currentLeftPunch != null -> Pair(HandSide.LEFT, currentLeftPunch!!)
+            currentRightPunch != null -> Pair(HandSide.RIGHT, currentRightPunch!!)
+            else -> null
+        }
+        
+        // Check cooldown if punch determined
+        if (punchToExecute != null) {
+            val (handSide, punchType) = punchToExecute
+            if (isPunchOnCooldown(punchType, lastPunchTime)) {
+                if (ENABLE_PUNCH_LOGS) {
+                    Log.d("PunchDebug", "Punch on cooldown - Type: $punchType")
+                }
+                // On cooldown - check if all punches are on cooldown
+                if (areAllPunchesOnCooldown(lastPunchTime)) {
+                    if (ENABLE_PUNCH_LOGS) {
+                        Log.d("PunchDebug", "All punches on cooldown - playing idle")
+                    }
+                    if (satoshiSprite.isDefending && ENABLE_BLOCKING_LOGS) Log.d("DefenseClear", "{\"source\":\"cooldown_idle\",\"ts\":${System.currentTimeMillis()}}")
+                    // All on cooldown - play idle
+                    sprites[index] = satoshiSprite.copy(
+                        animationFrames = SATOSHI_IDLE_FRAMES,
+                        currentFrameIndex = 0,
+                        isAnimated = true,
+                        currentPunchType = null,
+                        currentHandSide = null,
+                        isPunching = false,
+                        currentDefenseType = null,
+                        isDefending = false,
+                        sizeScale = SATOSHI_SCALE
+                    )
+                }
+                return@LaunchedEffect
+            }
+
+            // Execute punch only if not defending (guard against race where we passed the early return)
+            if (satoshiSprite.isDefending) {
+                if (ENABLE_BLOCKING_LOGS) {
+                    Log.d("BlockingDebug", "Skipping punch - sprite is defending (guard)")
+                }
+                return@LaunchedEffect
+            }
+            val frames = getPunchFrames(handSide, punchType)
+            if (frames.isNotEmpty()) {
+                if (ENABLE_PUNCH_LOGS) {
+                    Log.d("PunchDebug", "EXECUTING PUNCH - Hand: $handSide, Type: $punchType")
+                }
+                // Update sprite with punch animation
+                sprites[index] = satoshiSprite.copy(
+                    animationFrames = frames,
+                    currentFrameIndex = 0,
+                    isAnimated = true,
+                    currentPunchType = punchType,
+                    currentHandSide = handSide,
+                    isPunching = true,
+                    currentDefenseType = null,
+                    isDefending = false,
+                    sizeScale = SATOSHI_SCALE
+                )
+                // Schedule hit detection at 2nd-last frame
+                pendingSatoshiImpactCheck = ImpactCheckData(punchType, handSide, frames.size)
+                // Update lastPunchTime map with current time for this punch type
+                lastPunchTime = lastPunchTime + (punchType to System.currentTimeMillis())
+            } else {
+                if (ENABLE_PUNCH_LOGS) {
+                    Log.w("PunchDebug", "PUNCH FRAMES EMPTY - Hand: $handSide, Type: $punchType")
+                }
+            }
+        } else {
+            // No punch - return to idle (shouldn't reach here due to shouldPlayIdle check)
+            if (ENABLE_PUNCH_LOGS) {
+                Log.d("PunchDebug", "No punch determined - returning to idle")
+            }
+            sprites[index] = satoshiSprite.copy(
+                animationFrames = SATOSHI_IDLE_FRAMES,
+                currentFrameIndex = 0,
+                isAnimated = true,
+                currentPunchType = null,
+                currentHandSide = null,
+                isPunching = false,
+                sizeScale = SATOSHI_SCALE
+            )
+        }
+        
+        if (ENABLE_PUNCH_LOGS) {
+            Log.d("PunchDebug", "=== SPRITE UPDATE COMPLETE ===")
+        }
+    }
+    
+    // Update Lizard sprite (villain - uses SELL volume, offense when sell > buy)
+    val isLizardDefense = !isBinanceDefense  // Lizard defends when hero attacks
+    LaunchedEffect(currentLizardLeftPunch, currentLizardRightPunch, sprites, binanceSellVolume, coinbaseSellVolume, maxBinanceSellVolume, maxCoinbaseSellVolume, lastLizardPunchTime, isLizardDefense, lastLizardDefenseType, lastLizardDefenseSwitchTime, lastLizardDefenseCompletionTime, lizardInDamage, lizardKOPhase, satoshiKOPhase) {
+        // #region agent log
+        agentLog("MainActivity:LizardSpriteUpdate", "entry", "{\"lizardInDamage\":$lizardInDamage,\"isLizardDefense\":$isLizardDefense}", "A")
+        // #endregion
+        if (lizardKOPhase != null) {
+            // #region agent log
+            agentLog("MainActivity:LizardSpriteUpdate", "early_return_ko", "{\"lizardKOPhase\":\"$lizardKOPhase\"}", "H2")
+            // #endregion
+            return@LaunchedEffect
+        }
+        // Opponent (Satoshi) in KO - Lizard stays idle, no punching
+        if (satoshiKOPhase != null) {
+            val l = sprites.find { it.spriteType == SpriteType.LIZARD }
+            if (l != null && (l.currentPunchType != null || l.isPunching || l.animationFrames != LIZARD_IDLE_FRAMES)) {
+                val idx = sprites.indexOf(l)
+                sprites[idx] = l.copy(
+                    animationFrames = LIZARD_IDLE_FRAMES, currentFrameIndex = 0, isAnimated = true,
+                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                    currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                    sizeScale = LIZARD_SCALE
+                )
+            }
+            return@LaunchedEffect
+        }
+        if (lizardInDamage) {
+            // #region agent log
+            agentLog("MainActivity:LizardSpriteUpdate", "early_return", "{\"reason\":\"lizardInDamage\"}", "B")
+            // #endregion
+            return@LaunchedEffect
+        }
+        if (isBinanceDefense || !ENABLE_DODGING) {
+            lastLizardDefenseType = null
+            lastLizardDefenseSwitchTime = 0L
+            lastLizardDefenseCompletionTime = 0L
+        }
+        
+        val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD } ?: return@LaunchedEffect
+        val index = sprites.indexOf(lizardSprite)
+        // #region agent log
+        agentLog("MainActivity:LizardSpriteUpdate", "state", "{\"isDefending\":${lizardSprite.isDefending},\"isPunching\":${lizardSprite.isPunching},\"playAnimationOnce\":${lizardSprite.playAnimationOnce},\"framesSize\":${lizardSprite.animationFrames.size}}", "A")
+        // #endregion
+        if (lizardSprite.isDefending) {
+            // #region agent log
+            agentLog("MainActivity:LizardSpriteUpdate", "early_return", "{\"reason\":\"isDefending\"}", "D")
+            // #endregion
+            return@LaunchedEffect
+        }
+        
+        if (ENABLE_DODGING && isLizardDefense &&
+            (lastLizardDefenseCompletionTime == 0L || (System.currentTimeMillis() - lastLizardDefenseCompletionTime) >= MIN_IDLE_AFTER_DEFENSE_MS)) {
+            val newDefenseType = getDefenseTypeFromVolume(
+                binanceSellVolume, coinbaseSellVolume,
+                maxBinanceSellVolume, maxCoinbaseSellVolume
+            )
+            val onCooldown = lastLizardDefenseType != null && newDefenseType != lastLizardDefenseType &&
+                isDefenseOnCooldown(lastLizardDefenseType, lastLizardDefenseSwitchTime)
+            val effectiveType = if (onCooldown) lastLizardDefenseType else newDefenseType
+            val defenseFrames = effectiveType?.let { getLizardDefenseFrames(it) } ?: emptyList()
+            
+            if (defenseFrames.isEmpty()) {
+                // #region agent log
+                agentLog("MainActivity:LizardSpriteUpdate", "set_idle", "{\"path\":\"defenseFramesEmpty\",\"playAnimationOnce\":false}", "A")
+                // #endregion
+                sprites[index] = lizardSprite.copy(
+                    animationFrames = LIZARD_IDLE_FRAMES,
+                    currentFrameIndex = 0, isAnimated = true,
+                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                    playAnimationOnce = false, currentDefenseType = null, isDefending = false,
+                    sizeScale = LIZARD_SCALE
+                )
+                return@LaunchedEffect
+            }
+            val isNewDefense = lizardSprite.currentDefenseType != effectiveType
+            // #region agent log
+            agentLog("MainActivity:LizardSpriteUpdate", "set_defense", "{\"effectiveType\":\"$effectiveType\"}", "C")
+            // #endregion
+            sprites[index] = lizardSprite.copy(
+                animationFrames = defenseFrames,
+                currentFrameIndex = 0, isAnimated = true,
+                currentPunchType = null, currentHandSide = null, isPunching = false,
+                playAnimationOnce = true, currentDefenseType = effectiveType,
+                isDefending = if (isNewDefense) true else lizardSprite.isDefending,
+                sizeScale = LIZARD_SCALE
+            )
+            if (!onCooldown) {
+                lastLizardDefenseType = effectiveType
+                lastLizardDefenseSwitchTime = System.currentTimeMillis()
+            }
+            return@LaunchedEffect
+        }
+        
+        if (lizardSprite.isPunching) {
+            // #region agent log
+            agentLog("MainActivity:LizardSpriteUpdate", "early_return", "{\"reason\":\"isPunching\"}", "B")
+            // #endregion
+            return@LaunchedEffect
+        }
+        
+        if (!lizardSprite.isPunching && lizardSprite.currentPunchType != null) {
+            // #region agent log
+            agentLog("MainActivity:LizardSpriteUpdate", "set_idle", "{\"path\":\"clear_punch_state\",\"hasPlayAnimationOnce\":false}", "C")
+            // #endregion
+            sprites[index] = lizardSprite.copy(
+                animationFrames = LIZARD_IDLE_FRAMES,
+                currentFrameIndex = 0, isAnimated = true,
+                currentPunchType = null, currentHandSide = null,
+                isPunching = false, currentDefenseType = null, isDefending = false,
+                playAnimationOnce = false,
+                sizeScale = LIZARD_SCALE
+            )
+            return@LaunchedEffect
+        }
+        
+        val shouldPlayIdle = (currentLizardLeftPunch == null && currentLizardRightPunch == null) ||
+            areAllPunchesOnCooldown(lastLizardPunchTime)
+        if (shouldPlayIdle) {
+            if (lizardSprite.currentPunchType != null || lizardSprite.isPunching ||
+                lizardSprite.animationFrames != LIZARD_IDLE_FRAMES) {
+                // #region agent log
+                agentLog("MainActivity:LizardSpriteUpdate", "set_idle", "{\"path\":\"shouldPlayIdle\",\"hasPlayAnimationOnce\":false}", "A")
+                // #endregion
+                sprites[index] = lizardSprite.copy(
+                    animationFrames = LIZARD_IDLE_FRAMES,
+                    currentFrameIndex = 0, isAnimated = true,
+                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                    currentDefenseType = null, isDefending = false,
+                    playAnimationOnce = false,
+                    sizeScale = LIZARD_SCALE
+                )
+            }
+            return@LaunchedEffect
+        }
+        
+        val punchToExecute = when {
+            currentLizardLeftPunch != null && currentLizardRightPunch != null ->
+                if (PUNCH_PRIORITY_HAND == HandSide.LEFT) Pair(HandSide.LEFT, currentLizardLeftPunch!!)
+                else Pair(HandSide.RIGHT, currentLizardRightPunch!!)
+            currentLizardLeftPunch != null -> Pair(HandSide.LEFT, currentLizardLeftPunch!!)
+            currentLizardRightPunch != null -> Pair(HandSide.RIGHT, currentLizardRightPunch!!)
+            else -> null
+        }
+        
+        if (punchToExecute != null) {
+            val (handSide, punchType) = punchToExecute
+            if (isPunchOnCooldown(punchType, lastLizardPunchTime)) {
+                if (areAllPunchesOnCooldown(lastLizardPunchTime)) {
+                    // #region agent log
+                    agentLog("MainActivity:LizardSpriteUpdate", "set_idle", "{\"path\":\"cooldown_idle\",\"hasPlayAnimationOnce\":false}", "A")
+                    // #endregion
+                    sprites[index] = lizardSprite.copy(
+                        animationFrames = LIZARD_IDLE_FRAMES,
+                        currentFrameIndex = 0, isAnimated = true,
+                        currentPunchType = null, currentHandSide = null, isPunching = false,
+                        currentDefenseType = null, isDefending = false,
+                        playAnimationOnce = false,
+                        sizeScale = LIZARD_SCALE
+                    )
+                }
+                return@LaunchedEffect
+            }
+            val frames = getLizardPunchFrames(handSide, punchType)
+            if (frames.isNotEmpty()) {
+                sprites[index] = lizardSprite.copy(
+                    animationFrames = frames,
+                    currentFrameIndex = 0, isAnimated = true,
+                    currentPunchType = punchType, currentHandSide = handSide, isPunching = true,
+                    currentDefenseType = null, isDefending = false,
+                    sizeScale = LIZARD_SCALE
+                )
+                pendingLizardImpactCheck = ImpactCheckData(punchType, handSide, frames.size)
+                lastLizardPunchTime = lastLizardPunchTime + (punchType to System.currentTimeMillis())
+            } else {
+                // #region agent log
+                agentLog("MainActivity:LizardSpriteUpdate", "set_idle", "{\"path\":\"punch_frames_empty\",\"hasPlayAnimationOnce\":false}", "A")
+                // #endregion
+                sprites[index] = lizardSprite.copy(
+                    animationFrames = LIZARD_IDLE_FRAMES,
+                    currentFrameIndex = 0, isAnimated = true,
+                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                    playAnimationOnce = false,
+                    sizeScale = LIZARD_SCALE
+                )
+            }
+        } else {
+            // #region agent log
+            agentLog("MainActivity:LizardSpriteUpdate", "set_idle", "{\"path\":\"no_punch_else\",\"hasPlayAnimationOnce\":false}", "A")
+            // #endregion
+            sprites[index] = lizardSprite.copy(
+                animationFrames = LIZARD_IDLE_FRAMES,
+                currentFrameIndex = 0, isAnimated = true,
+                currentPunchType = null, currentHandSide = null, isPunching = false,
+                playAnimationOnce = false,
+                sizeScale = LIZARD_SCALE
+            )
+        }
+    }
+    
+    // Hit detection: Satoshi's punch vs Lizard (at 2nd-last frame)
+    LaunchedEffect(pendingSatoshiImpactCheck, sprites, lizardInDamage) {
+        val pending = pendingSatoshiImpactCheck ?: return@LaunchedEffect
+        val impactDelay = maxOf(0, (pending.frameCount - 2)) * ANIMATION_FRAME_DELAY_MS
+        delay(impactDelay)
+        if (lizardInDamage) {
+            pendingSatoshiImpactCheck = null
+            return@LaunchedEffect
+        }
+        val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD }
+        if (lizardSprite != null) {
+            val requiredDefense = getRequiredDefenseForAttack(pending.punchType, pending.handSide)
+            val defended = lizardSprite.isDefending && lizardSprite.currentDefenseType == requiredDefense
+            if (!defended) {
+                if (lizardKOPhase != null) {
+                    pendingSatoshiImpactCheck = null
+                    return@LaunchedEffect
+                }
+                val damageType = getDamageTypeForAttack(pending.punchType, pending.handSide)
+                if (lizardSprite.isDefending) {
+                    // Defer damage until Lizard's defense animation completes
+                    pendingLizardDamageAfterDefense = damageType
+                    pendingLizardDamagePunchType = pending.punchType
+                    pendingSatoshiImpactCheck = null
+                    return@LaunchedEffect
+                }
+                val lizardIndex = sprites.indexOf(lizardSprite)
+                lizardDamagePoints = (lizardDamagePoints + getDamagePoints(pending.punchType)).coerceAtMost(MAX_DAMAGE_POINTS)
+                if (lizardDamagePoints >= MAX_DAMAGE_POINTS && lizardKOPhase == null) {
+                    lizardKOPhase = KOPhase.FALL
+                    val koFrames = getLizardKOPhaseFrames(KOPhase.FALL)
+                    sprites[lizardIndex] = lizardSprite.copy(
+                        animationFrames = koFrames,
+                        currentFrameIndex = 0, isAnimated = true,
+                        currentPunchType = null, currentHandSide = null, isPunching = false,
+                        currentDefenseType = null, isDefending = false,
+                        playAnimationOnce = true,
+                        sizeScale = LIZARD_SCALE
+                    )
+                } else {
+                    lizardInDamage = true
+                    lizardDamageType = damageType
+                    val damageFrames = getLizardDamageFrames(lizardDamageType!!)
+                    // #region agent log
+                    val isBody = damageType == DamageAnimationType.LEFT_DAMAGE_BODY || damageType == DamageAnimationType.RIGHT_DAMAGE_BODY
+                    if (isBody) agentLog("MainActivity:HitApply", "lizard_body_damage", "{\"damageType\":\"$damageType\",\"frameCount\":${damageFrames.size},\"ts\":${System.currentTimeMillis()}}", "H1")
+                    // #endregion
+                    sprites[lizardIndex] = lizardSprite.copy(
+                        animationFrames = if (damageFrames.isNotEmpty()) damageFrames else LIZARD_IDLE_FRAMES,
+                        currentFrameIndex = 0, isAnimated = true,
+                        currentPunchType = null, currentHandSide = null, isPunching = false,
+                        currentDefenseType = null, isDefending = false,
+                        playAnimationOnce = damageFrames.isNotEmpty(),
+                        sizeScale = LIZARD_SCALE
+                    )
+                }
+            }
+        }
+        pendingSatoshiImpactCheck = null
+    }
+    
+    // Hit detection: Lizard's punch vs Satoshi (at 2nd-last frame)
+    LaunchedEffect(pendingLizardImpactCheck, sprites, satoshiInDamage) {
+        val pending = pendingLizardImpactCheck ?: return@LaunchedEffect
+        val impactDelay = maxOf(0, (pending.frameCount - 2)) * ANIMATION_FRAME_DELAY_MS
+        delay(impactDelay)
+        if (satoshiInDamage) {
+            pendingLizardImpactCheck = null
+            return@LaunchedEffect
+        }
+        val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+        if (satoshiSprite != null) {
+            val requiredDefense = getRequiredDefenseForAttack(pending.punchType, pending.handSide)
+            val defended = satoshiSprite.isDefending && satoshiSprite.currentDefenseType == requiredDefense
+            if (!defended) {
+                if (satoshiKOPhase != null) {
+                    pendingLizardImpactCheck = null
+                    return@LaunchedEffect
+                }
+                val damageType = getDamageTypeForAttack(pending.punchType, pending.handSide)
+                if (satoshiSprite.isDefending) {
+                    // Defer damage until Satoshi's defense animation completes
+                    pendingSatoshiDamageAfterDefense = damageType
+                    pendingSatoshiDamagePunchType = pending.punchType
+                    pendingLizardImpactCheck = null
+                    return@LaunchedEffect
+                }
+                val satoshiIndex = sprites.indexOf(satoshiSprite)
+                satoshiDamagePoints = (satoshiDamagePoints + getDamagePoints(pending.punchType)).coerceAtMost(MAX_DAMAGE_POINTS)
+                if (satoshiDamagePoints >= MAX_DAMAGE_POINTS && satoshiKOPhase == null) {
+                    satoshiKOPhase = KOPhase.FALL
+                    val koFrames = getSatoshiKOPhaseFrames(KOPhase.FALL)
+                    sprites[satoshiIndex] = satoshiSprite.copy(
+                        animationFrames = koFrames,
+                        currentFrameIndex = 0, isAnimated = true,
+                        currentPunchType = null, currentHandSide = null, isPunching = false,
+                        currentDefenseType = null, isDefending = false,
+                        playAnimationOnce = true,
+                        sizeScale = SATOSHI_SCALE
+                    )
+                } else {
+                    val damageFrames = getSatoshiDamageFrames(damageType)
+                    if (DAMAGE_DEBUG) {
+                        Log.d("DamageDebug", "{\"h\":\"A,B,E\",\"loc\":\"hit_apply_satoshi\",\"damageType\":\"$damageType\",\"frameCount\":${damageFrames.size},\"ts\":${System.currentTimeMillis()}}")
+                    }
+                    satoshiInDamage = true
+                    satoshiDamageType = damageType
+                    if (damageType == DamageAnimationType.CENTER_DAMAGE_UPPERCUT) {
+                        agentLog("MainActivity:HitApply", "satoshi_center_damage", "{\"frameCount\":${damageFrames.size},\"ts\":${System.currentTimeMillis()}}", "A")
+                    }
+                    if (ENABLE_BLOCKING_LOGS) Log.d("DefenseClear", "{\"source\":\"damage\",\"ts\":${System.currentTimeMillis()}}")
+                    sprites[satoshiIndex] = satoshiSprite.copy(
+                        animationFrames = if (damageFrames.isNotEmpty()) damageFrames else SATOSHI_IDLE_FRAMES,
+                        currentFrameIndex = 0, isAnimated = true,
+                        currentPunchType = null, currentHandSide = null, isPunching = false,
+                        currentDefenseType = null, isDefending = false,
+                        playAnimationOnce = damageFrames.isNotEmpty(),
+                        sizeScale = SATOSHI_SCALE
+                    )
+                }
+            }
+        }
+        pendingLizardImpactCheck = null
+    }
+    
+    // Damage completion is driven by Sprite's onPlayOnceComplete callback (event-driven), not by timer.
+    // Safety net: if callback never runs, clear damage after timeout so app cannot get stuck
+    LaunchedEffect(satoshiInDamage) {
+        if (!satoshiInDamage) return@LaunchedEffect
+        delay(DAMAGE_COMPLETION_SAFETY_TIMEOUT_MS)
+        if (satoshiInDamage) {
+            val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+            if (satoshiSprite != null) {
+                val idx = sprites.indexOf(satoshiSprite)
+                sprites[idx] = satoshiSprite.copy(
+                    animationFrames = SATOSHI_IDLE_FRAMES,
+                    currentFrameIndex = 0, isAnimated = true,
+                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                    currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                    sizeScale = SATOSHI_SCALE
+                )
+            }
+            satoshiInDamage = false
+            satoshiDamageType = null
+            if (DAMAGE_DEBUG) {
+                Log.d("DamageDebug", "{\"h\":\"A\",\"loc\":\"damage_completion_safety_net\",\"ts\":${System.currentTimeMillis()}}")
+            }
+            agentLog("MainActivity:DamageCompletion", "satoshi_cleared_safety_net", "{\"ts\":${System.currentTimeMillis()}}", "D")
+        }
+    }
+    LaunchedEffect(lizardInDamage) {
+        if (!lizardInDamage) return@LaunchedEffect
+        delay(DAMAGE_COMPLETION_SAFETY_TIMEOUT_MS)
+        if (lizardInDamage) {
+            val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD }
+            if (lizardSprite != null) {
+                val idx = sprites.indexOf(lizardSprite)
+                sprites[idx] = lizardSprite.copy(
+                    animationFrames = LIZARD_IDLE_FRAMES,
+                    currentFrameIndex = 0, isAnimated = true,
+                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                    currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                    sizeScale = LIZARD_SCALE
+                )
+            }
+            val wasBodyType = lizardDamageType == DamageAnimationType.LEFT_DAMAGE_BODY || lizardDamageType == DamageAnimationType.RIGHT_DAMAGE_BODY
+            lizardInDamage = false
+            lizardDamageType = null
+            if (wasBodyType) agentLog("MainActivity:LizardDamageCompletion", "lizard_body_cleared_safety_net", "{\"ts\":${System.currentTimeMillis()}}", "H2")
+        }
+    }
+
+    // KO sequence driven by display duration constants (Fall -> Knocked Down -> Rise -> idle)
+    LaunchedEffect(satoshiKOPhase != null) {
+        if (satoshiKOPhase != KOPhase.FALL) return@LaunchedEffect
+        delay(KO_FALL_DISPLAY_MS)
+        satoshiKOPhase = KOPhase.KNOCKED_DOWN
+        val satoshiSprite1 = sprites.find { it.spriteType == SpriteType.SATOSHI }
+        if (satoshiSprite1 != null) {
+            val idx = sprites.indexOf(satoshiSprite1)
+            val koFrames = getSatoshiKOPhaseFrames(KOPhase.KNOCKED_DOWN)
+            sprites[idx] = satoshiSprite1.copy(
+                animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
+                currentPunchType = null, currentHandSide = null, isPunching = false,
+                currentDefenseType = null, isDefending = false, playAnimationOnce = true,
+                sizeScale = SATOSHI_SCALE
+            )
+        }
+        delay(KO_KNOCKED_DOWN_DISPLAY_MS)
+        satoshiKOPhase = KOPhase.RISE
+        val satoshiSprite2 = sprites.find { it.spriteType == SpriteType.SATOSHI }
+        if (satoshiSprite2 != null) {
+            val idx = sprites.indexOf(satoshiSprite2)
+            val koFrames = getSatoshiKOPhaseFrames(KOPhase.RISE)
+            sprites[idx] = satoshiSprite2.copy(
+                animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
+                currentPunchType = null, currentHandSide = null, isPunching = false,
+                currentDefenseType = null, isDefending = false, playAnimationOnce = true,
+                sizeScale = SATOSHI_SCALE
+            )
+        }
+        delay(KO_RISE_DISPLAY_MS)
+        satoshiKOPhase = null
+        satoshiDamagePoints = 0
+        satoshiInDamage = false
+        satoshiDamageType = null
+        val satoshiSprite3 = sprites.find { it.spriteType == SpriteType.SATOSHI }
+        if (satoshiSprite3 != null) {
+            val idx = sprites.indexOf(satoshiSprite3)
+            sprites[idx] = satoshiSprite3.copy(
+                animationFrames = SATOSHI_IDLE_FRAMES, currentFrameIndex = 0, isAnimated = true,
+                currentPunchType = null, currentHandSide = null, isPunching = false,
+                currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                sizeScale = SATOSHI_SCALE
+            )
+        }
+    }
+    LaunchedEffect(lizardKOPhase != null) {
+        if (lizardKOPhase != KOPhase.FALL) return@LaunchedEffect
+        delay(KO_FALL_DISPLAY_MS)
+        lizardKOPhase = KOPhase.KNOCKED_DOWN
+        val lizardSprite1 = sprites.find { it.spriteType == SpriteType.LIZARD }
+        if (lizardSprite1 != null) {
+            val idx = sprites.indexOf(lizardSprite1)
+            val koFrames = getLizardKOPhaseFrames(KOPhase.KNOCKED_DOWN)
+            sprites[idx] = lizardSprite1.copy(
+                animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
+                currentPunchType = null, currentHandSide = null, isPunching = false,
+                currentDefenseType = null, isDefending = false, playAnimationOnce = true,
+                sizeScale = LIZARD_SCALE
+            )
+        }
+        delay(KO_KNOCKED_DOWN_DISPLAY_MS)
+        lizardKOPhase = KOPhase.RISE
+        val lizardSprite2 = sprites.find { it.spriteType == SpriteType.LIZARD }
+        if (lizardSprite2 != null) {
+            val idx = sprites.indexOf(lizardSprite2)
+            val koFrames = getLizardKOPhaseFrames(KOPhase.RISE)
+            sprites[idx] = lizardSprite2.copy(
+                animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
+                currentPunchType = null, currentHandSide = null, isPunching = false,
+                currentDefenseType = null, isDefending = false, playAnimationOnce = true,
+                sizeScale = LIZARD_SCALE
+            )
+        }
+        delay(KO_RISE_DISPLAY_MS)
+        lizardKOPhase = null
+        lizardDamagePoints = 0
+        lizardInDamage = false
+        lizardDamageType = null
+        val lizardSprite3 = sprites.find { it.spriteType == SpriteType.LIZARD }
+        if (lizardSprite3 != null) {
+            val idx = sprites.indexOf(lizardSprite3)
+            sprites[idx] = lizardSprite3.copy(
+                animationFrames = LIZARD_IDLE_FRAMES, currentFrameIndex = 0, isAnimated = true,
+                currentPunchType = null, currentHandSide = null, isPunching = false,
+                currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                sizeScale = LIZARD_SCALE
+            )
+        }
+    }
+
+    // Watch for punch animation completion - only trigger when new punch starts
+    val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+    val animationCompletionKey = remember(satoshiSprite?.isPunching, satoshiSprite?.currentPunchType, satoshiSprite?.currentHandSide) {
+        if (satoshiSprite?.isPunching == true && satoshiSprite.currentPunchType != null && satoshiSprite.currentHandSide != null) {
+            "${satoshiSprite.currentPunchType}_${satoshiSprite.currentHandSide}"
+        } else {
+            null
+        }
+    }
+    
+    LaunchedEffect(animationCompletionKey) {
+        if (animationCompletionKey != null) {
+            val sprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+            if (sprite != null && sprite.animationFrames.isNotEmpty()) {
+                val frameCount = sprite.animationFrames.size
+                val animationDuration = frameCount * ANIMATION_FRAME_DELAY_MS
+                
+                if (ENABLE_PUNCH_LOGS) {
+                    Log.d("PunchDebug", "Waiting for animation to complete - frames: $frameCount, duration: ${animationDuration}ms")
+                }
+                
+                delay(animationDuration)
+                
+                // Animation completed - clear all punch state and transition to idle (never overwrite active defense)
+                val updatedSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+                if (updatedSprite != null && updatedSprite.isPunching && !updatedSprite.isDefending) {
+                    val index = sprites.indexOf(updatedSprite)
+                    if (ENABLE_PUNCH_LOGS) {
+                        Log.d("PunchDebug", "Animation completed - clearing punch state and transitioning to idle")
+                    }
+                    sprites[index] = updatedSprite.copy(
+                        animationFrames = SATOSHI_IDLE_FRAMES,
+                        currentFrameIndex = 0,
+                        currentPunchType = null,
+                        currentHandSide = null,
+                        isPunching = false,
+                        currentDefenseType = null,
+                        isDefending = false,
+                        sizeScale = SATOSHI_SCALE
+                    )
+                }
+            }
+        }
+    }
+    
+    // Watch for defense animation completion - key includes defense type so switching type restarts timer (fixes split-second dodge)
+    val defenseAnimationCompletionKey = remember(satoshiSprite?.isDefending, satoshiSprite?.currentDefenseType) {
+        if (satoshiSprite?.isDefending == true && satoshiSprite?.currentDefenseType != null)
+            "defense_${satoshiSprite.currentDefenseType}" else null
+    }
+    
+    LaunchedEffect(defenseAnimationCompletionKey) {
+        if (defenseAnimationCompletionKey != null) {
+            val sprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+            if (sprite != null && sprite.animationFrames.isNotEmpty()) {
+                val frameCount = sprite.animationFrames.size
+                // Enforce minimum 3 frames (full dodge/block length) so split-second clears don't happen
+                val minDefenseFrames = 3
+                val animationDuration = maxOf(minDefenseFrames * ANIMATION_FRAME_DELAY_MS, frameCount * ANIMATION_FRAME_DELAY_MS)
+                val startTs = System.currentTimeMillis()
+                if (ENABLE_BLOCKING_LOGS) Log.d("DefenseClear", "{\"source\":\"defense_completion_start\",\"key\":\"$defenseAnimationCompletionKey\",\"frameCount\":$frameCount,\"durationMs\":$animationDuration,\"ts\":$startTs}")
+                if (ENABLE_BLOCKING_LOGS) {
+                    Log.d("BlockingDebug", "Waiting for defense animation to complete - frames: $frameCount, duration: ${animationDuration}ms")
+                }
+                delay(animationDuration)
+                // Animation completed - clear defense state and transition to idle
+                val updatedSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+                if (updatedSprite != null && updatedSprite.isDefending) {
+                    val index = sprites.indexOf(updatedSprite)
+                    if (ENABLE_BLOCKING_LOGS) Log.d("DefenseClear", "{\"source\":\"defense_completion\",\"key\":\"$defenseAnimationCompletionKey\",\"ts\":${System.currentTimeMillis()},\"elapsedMs\":${System.currentTimeMillis() - startTs}}")
+                    if (ENABLE_BLOCKING_LOGS) {
+                        Log.d("BlockingDebug", "Defense animation completed - clearing defense state and transitioning to idle")
+                    }
+                    // Apply pending damage first (before writing idle) so LaunchedEffect isn't cancelled before this runs
+                    val pendingDamage = pendingSatoshiDamageAfterDefense
+                    val pendingPunch = pendingSatoshiDamagePunchType
+                    if (pendingDamage != null && pendingPunch != null) {
+                        pendingSatoshiDamageAfterDefense = null
+                        pendingSatoshiDamagePunchType = null
+                        if (satoshiKOPhase != null) {
+                            // KO sequence owns sprite; do not overwrite with idle
+                        } else {
+                            satoshiDamagePoints = (satoshiDamagePoints + getDamagePoints(pendingPunch)).coerceAtMost(MAX_DAMAGE_POINTS)
+                            if (satoshiDamagePoints >= MAX_DAMAGE_POINTS && satoshiKOPhase == null) {
+                                satoshiKOPhase = KOPhase.FALL
+                                val koFrames = getSatoshiKOPhaseFrames(KOPhase.FALL)
+                                sprites[index] = updatedSprite.copy(
+                                    animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
+                                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                                    currentDefenseType = null, isDefending = false,
+                                    playAnimationOnce = true,
+                                    sizeScale = SATOSHI_SCALE
+                                )
+                            } else {
+                                val damageFrames = getSatoshiDamageFrames(pendingDamage)
+                                satoshiInDamage = true
+                                satoshiDamageType = pendingDamage
+                                if (pendingDamage == DamageAnimationType.CENTER_DAMAGE_UPPERCUT) {
+                                    agentLog("MainActivity:DefenseCompletion", "satoshi_center_damage_deferred", "{\"frameCount\":${damageFrames.size},\"ts\":${System.currentTimeMillis()}}", "A")
+                                }
+                                sprites[index] = updatedSprite.copy(
+                                    animationFrames = if (damageFrames.isNotEmpty()) damageFrames else SATOSHI_IDLE_FRAMES,
+                                    currentFrameIndex = 0, isAnimated = true,
+                                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                                    currentDefenseType = null, isDefending = false,
+                                    playAnimationOnce = damageFrames.isNotEmpty(),
+                                    sizeScale = SATOSHI_SCALE
+                                )
+                            }
+                        }
+                    } else {
+                        sprites[index] = updatedSprite.copy(
+                            animationFrames = SATOSHI_IDLE_FRAMES,
+                            currentFrameIndex = 0,
+                            isAnimated = true,
+                            currentDefenseType = null,
+                            isDefending = false,
+                            playAnimationOnce = false,
+                            sizeScale = SATOSHI_SCALE
+                        )
+                    }
+                    lastDefenseCompletionTime = System.currentTimeMillis()
+                    lastDefenseType = null
+                    lastDefenseSwitchTime = 0L
+                }
+            }
+        }
+    }
+    
+    // Lizard punch and defense completion
+    val lizardSpriteForCompletion = sprites.find { it.spriteType == SpriteType.LIZARD }
+    val lizardPunchCompletionKey = remember(lizardSpriteForCompletion?.isPunching, lizardSpriteForCompletion?.currentPunchType, lizardSpriteForCompletion?.currentHandSide) {
+        if (lizardSpriteForCompletion?.isPunching == true && lizardSpriteForCompletion.currentPunchType != null && lizardSpriteForCompletion.currentHandSide != null)
+            "lizard_${lizardSpriteForCompletion.currentPunchType}_${lizardSpriteForCompletion.currentHandSide}" else null
+    }
+    LaunchedEffect(lizardPunchCompletionKey) {
+        if (lizardPunchCompletionKey != null) {
+            val sprite = sprites.find { it.spriteType == SpriteType.LIZARD }
+            if (sprite != null && sprite.animationFrames.isNotEmpty()) {
+                delay(sprite.animationFrames.size * ANIMATION_FRAME_DELAY_MS)
+                val updated = sprites.find { it.spriteType == SpriteType.LIZARD }
+                if (updated != null && updated.isPunching) {
+                    val idx = sprites.indexOf(updated)
+                    // #region agent log
+                    agentLog("MainActivity:LizardPunchCompletion", "set_idle", "{\"path\":\"punch_completion\",\"hasPlayAnimationOnce\":false}", "C")
+                    // #endregion
+                    sprites[idx] = updated.copy(
+                        animationFrames = LIZARD_IDLE_FRAMES, currentFrameIndex = 0,
+                        isAnimated = true, playAnimationOnce = false,
+                        currentPunchType = null, currentHandSide = null, isPunching = false,
+                        currentDefenseType = null, isDefending = false, sizeScale = LIZARD_SCALE
+                    )
+                }
+            }
+        }
+    }
+    val lizardDefenseCompletionKey = remember(lizardSpriteForCompletion?.isDefending, lizardSpriteForCompletion?.currentDefenseType) {
+        if (lizardSpriteForCompletion?.isDefending == true && lizardSpriteForCompletion?.currentDefenseType != null)
+            "lizard_defense_${lizardSpriteForCompletion.currentDefenseType}" else null
+    }
+    LaunchedEffect(lizardDefenseCompletionKey) {
+        if (lizardDefenseCompletionKey != null) {
+            // #region agent log
+            agentLog("MainActivity:LizardDefenseCompletion", "entry", "{\"key\":\"$lizardDefenseCompletionKey\"}", "D")
+            // #endregion
+            val sprite = sprites.find { it.spriteType == SpriteType.LIZARD }
+            if (sprite != null && sprite.animationFrames.isNotEmpty()) {
+                val frameCount = sprite.animationFrames.size
+                val minDefenseFrames = 3
+                val durationMs = maxOf(minDefenseFrames * ANIMATION_FRAME_DELAY_MS, frameCount * ANIMATION_FRAME_DELAY_MS)
+                delay(durationMs)
+                val updated = sprites.find { it.spriteType == SpriteType.LIZARD }
+                if (updated != null && updated.isDefending) {
+                    val idx = sprites.indexOf(updated)
+                    // Apply pending damage first (before writing idle) so LaunchedEffect isn't cancelled before this runs
+                    val pendingDamage = pendingLizardDamageAfterDefense
+                    val pendingPunch = pendingLizardDamagePunchType
+                    if (pendingDamage != null && pendingPunch != null) {
+                        // #region agent log
+                        agentLog("MainActivity:LizardDefenseCompletion", "apply_damage", "{\"pendingDamage\":\"$pendingDamage\"}", "E")
+                        val lizardBody = pendingDamage == DamageAnimationType.LEFT_DAMAGE_BODY || pendingDamage == DamageAnimationType.RIGHT_DAMAGE_BODY
+                        if (lizardBody) agentLog("MainActivity:LizardDefenseCompletion", "lizard_body_damage_deferred", "{\"pendingDamage\":\"$pendingDamage\",\"ts\":${System.currentTimeMillis()}}", "H1")
+                        // #endregion
+                        pendingLizardDamageAfterDefense = null
+                        pendingLizardDamagePunchType = null
+                        if (lizardKOPhase != null) {
+                            // KO sequence owns sprite; do not overwrite with idle
+                        } else {
+                            lizardDamagePoints = (lizardDamagePoints + getDamagePoints(pendingPunch)).coerceAtMost(MAX_DAMAGE_POINTS)
+                            if (lizardDamagePoints >= MAX_DAMAGE_POINTS && lizardKOPhase == null) {
+                                lizardKOPhase = KOPhase.FALL
+                                val koFrames = getLizardKOPhaseFrames(KOPhase.FALL)
+                                sprites[idx] = updated.copy(
+                                    animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
+                                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                                    currentDefenseType = null, isDefending = false,
+                                    playAnimationOnce = true,
+                                    sizeScale = LIZARD_SCALE
+                                )
+                            } else {
+                                val damageFrames = getLizardDamageFrames(pendingDamage)
+                                lizardInDamage = true
+                                lizardDamageType = pendingDamage
+                                sprites[idx] = updated.copy(
+                                    animationFrames = if (damageFrames.isNotEmpty()) damageFrames else LIZARD_IDLE_FRAMES,
+                                    currentFrameIndex = 0, isAnimated = true,
+                                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                                    currentDefenseType = null, isDefending = false,
+                                    playAnimationOnce = damageFrames.isNotEmpty(),
+                                    sizeScale = LIZARD_SCALE
+                                )
+                            }
+                        }
+                    } else {
+                        // #region agent log
+                        agentLog("MainActivity:LizardDefenseCompletion", "set_idle", "{\"playAnimationOnce\":false}", "E")
+                        // #endregion
+                        sprites[idx] = updated.copy(
+                            animationFrames = LIZARD_IDLE_FRAMES, currentFrameIndex = 0, isAnimated = true,
+                            currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                            sizeScale = LIZARD_SCALE
+                        )
+                    }
+                    lastLizardDefenseCompletionTime = System.currentTimeMillis()
+                    lastLizardDefenseType = null
+                    lastLizardDefenseSwitchTime = 0L
+                }
+            }
+        }
+    }
+    
+    
+    // Track screen size for spawning
+    var screenSizeForSpawn by remember { mutableStateOf(Size.Zero) }
+    val density = LocalDensity.current.density
+
+    // bg2 signs: spawn a wave of 1, 2, or 3 signs at SIGN_SPAWN_INTERVAL_MS; at most one sign per Y row
+    LaunchedEffect(SIGN_SPAWN_INTERVAL_MS, screenSizeForSpawn.width, screenSizeForSpawn.height) {
+        if (screenSizeForSpawn.width <= 0f || screenSizeForSpawn.height <= 0f) return@LaunchedEffect
+        while (true) {
+            delay(SIGN_SPAWN_INTERVAL_MS)
+            val w = screenSizeForSpawn.width
+            val h = screenSizeForSpawn.height
+            val marginPx = (SIGN_MARGIN_X_FRACTION * w).toFloat()
+            val minX = marginPx
+            val maxX = w - marginPx
+            val rowFractions = listOf(SIGN_ROW_Y_FRACTION_1, SIGN_ROW_Y_FRACTION_2, SIGN_ROW_Y_FRACTION_3)
+            val occupiedRows = signSpawns.map { it.rowIndex }.toSet()
+            val availableRows = (0..2).filter { it !in occupiedRows }
+            val count = (1..3).random().coerceIn(0, availableRows.size)
+            if (count > 0) {
+                val chosenRows = availableRows.shuffled().take(count)
+                val baseId = System.nanoTime()
+                val newSigns = chosenRows.mapIndexed { i, r ->
+                    val xPx = minX + (maxX - minX) * kotlin.random.Random.nextFloat()
+                    val yPx = h * rowFractions[r]
+                    BtcSignSpawn(id = baseId + i, xPx = xPx, yPx = yPx, frameIndex = 0, rowIndex = r)
+                }
+                signSpawns = signSpawns + newSigns
+            }
+        }
+    }
+
+    // bg2 signs: advance frames 0->1->2->Kill every SIGN_FRAME_DELAY_MS
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(SIGN_FRAME_DELAY_MS)
+            signSpawns = signSpawns
+                .map { it.copy(frameIndex = it.frameIndex + 1) }
+                .filter { it.frameIndex < BUY_BTC_SIGN_FRAMES.size }
+        }
+    }
+
+    // Spawn cat when trigger fires (block height or SPAWN_CAT timer); only one cat at a time
+    LaunchedEffect(catSpawnTriggerCount, screenSizeForSpawn.width, screenSizeForSpawn.height) {
+        if (catSpawnTriggerCount == 0 || screenSizeForSpawn.width <= 0f || screenSizeForSpawn.height <= 0f) return@LaunchedEffect
+        if (sprites.any { it.spriteType == SpriteType.CAT }) return@LaunchedEffect
+        val directionLeft = kotlin.random.Random.nextBoolean()
+        val positionY = screenSizeForSpawn.height * CAT_SPAWN_Y_FACTOR
+        val halfWidthPx = (CAT_SIZE_DP * density / 2f).toFloat()
+        val positionX = if (directionLeft) {
+            screenSizeForSpawn.width + CAT_OFFSCREEN_MARGIN_PX + halfWidthPx
+        } else {
+            -CAT_OFFSCREEN_MARGIN_PX - halfWidthPx
+        }
+        val catState = SpriteState()
+        catState.position = Offset(positionX, positionY)
+        val catFrames = if (directionLeft) E_CAT_LEFT_FRAMES else E_CAT_RIGHT_FRAMES
+        val catSprite = SpriteData(
+            spriteState = catState,
+            spriteResourceId = catFrames[0],
+            spriteType = SpriteType.CAT,
+            layer = 3,
+            sizeScale = 1f,
+            spriteSizeDp = CAT_SIZE_DP,
+            animationFrames = catFrames,
+            currentFrameIndex = 0,
+            isAnimated = true
+        )
+        sprites.add(catSprite)
+        catDirectionLeft = directionLeft
+    }
+
+    // Move cat each frame; remove when off-screen
+    LaunchedEffect(sprites.any { it.spriteType == SpriteType.CAT }, catDirectionLeft) {
+        val catSprite = sprites.find { it.spriteType == SpriteType.CAT } ?: return@LaunchedEffect
+        val dirLeft = catDirectionLeft ?: return@LaunchedEffect
+        var catIndex = sprites.indexOf(catSprite)
+        if (catIndex < 0) return@LaunchedEffect
+        val halfWidthPx = (CAT_SIZE_DP * density / 2f).toFloat()
+        while (sprites.getOrNull(catIndex)?.spriteType == SpriteType.CAT) {
+            delay(ANIMATION_FRAME_DELAY_MS)
+            val cat = sprites.getOrNull(catIndex) ?: break
+            if (cat.spriteType != SpriteType.CAT) break
+            val pos = cat.spriteState.position
+            val newX = if (dirLeft) pos.x - CAT_SPEED else pos.x + CAT_SPEED
+            val newState = SpriteState()
+            newState.position = Offset(newX, pos.y)
+            sprites[catIndex] = cat.copy(spriteState = newState)
+            val offLeft = newX + halfWidthPx < -CAT_OFFSCREEN_MARGIN_PX
+            val offRight = newX - halfWidthPx > screenSizeForSpawn.width + CAT_OFFSCREEN_MARGIN_PX
+            if (offLeft || offRight) {
+                sprites.removeAt(catIndex)
+                catDirectionLeft = null
+                break
+            }
+        }
+    }
+
+    // Initialize Satoshi and update position when constants or screen size change
+    LaunchedEffect(screenSizeForSpawn.width, screenSizeForSpawn.height, SATOSHI_X_POSITION, SATOSHI_Y_POSITION, SATOSHI_SCALE) {
+        if (screenSizeForSpawn.width > 0f && screenSizeForSpawn.height > 0f) {
+            // Check if Satoshi already exists
+            val satoshiIndex = sprites.indexOfFirst { it.spriteType == SpriteType.SATOSHI }
+            val satoshiExists = satoshiIndex >= 0
+            
+            // Satoshi sprite is 128dp x 128dp
+            val spriteSizeDp = 128f
+            // Store position as sprite center (0.0 = left/top, 0.5 = center, 1.0 = right/bottom); Sprite draws with center anchor
+            val positionX = screenSizeForSpawn.width * SATOSHI_X_POSITION
+            val positionY = screenSizeForSpawn.height * SATOSHI_Y_POSITION
+            // #region agent log
+            val halfW = screenSizeForSpawn.width / 2f
+            agentLog("LaunchedEffect:Satoshi", "position_computed", "{\"screenW\":${screenSizeForSpawn.width},\"positionX\":$positionX,\"positionY\":$positionY,\"SATOSHI_X\":$SATOSHI_X_POSITION,\"halfWidth\":$halfW,\"deltaFromCenter\":${positionX - halfW}}", "H1")
+            // #endregion
+            if (!satoshiExists) {
+                // Create new Satoshi sprite
+                val satoshiState = SpriteState()
+                satoshiState.position = Offset(positionX, positionY)
+                
+                val satoshiSprite = SpriteData(
+                    spriteState = satoshiState,
+                    spriteResourceId = SATOSHI_IDLE_FRAMES[0],  // Default to first frame
+                    spriteType = SpriteType.SATOSHI,
+                    layer = 2,
+                    sizeScale = SATOSHI_SCALE,  // Use constant instead of hardcoded 1.0f
+                    spriteSizeDp = spriteSizeDp,
+                    animationFrames = SATOSHI_IDLE_FRAMES,
+                    currentFrameIndex = 0,
+                    isAnimated = true
+                )
+                
+                sprites.add(satoshiSprite)
+            } else {
+                // Update existing Satoshi position
+                val existingSprite = sprites[satoshiIndex]
+                existingSprite.spriteState.position = Offset(positionX, positionY)
+                // Update the sprite in the list to trigger recomposition
+                sprites[satoshiIndex] = existingSprite.copy(
+                    sizeScale = SATOSHI_SCALE
+                )
+            }
+        }
+    }
+    
+    // Initialize Lizard and update position when constants or screen size change
+    LaunchedEffect(screenSizeForSpawn.width, screenSizeForSpawn.height, LIZARD_X_POSITION, LIZARD_Y_POSITION, LIZARD_SCALE) {
+        if (screenSizeForSpawn.width > 0f && screenSizeForSpawn.height > 0f) {
+            val lizardIndex = sprites.indexOfFirst { it.spriteType == SpriteType.LIZARD }
+            val lizardExists = lizardIndex >= 0
+            
+            val spriteSizeDp = 128f
+            // Store position as sprite center; Sprite draws with center anchor
+            val positionX = screenSizeForSpawn.width * LIZARD_X_POSITION
+            val positionY = screenSizeForSpawn.height * LIZARD_Y_POSITION
+            // #region agent log
+            val halfW = screenSizeForSpawn.width / 2f
+            agentLog("LaunchedEffect:Lizard", "position_computed", "{\"screenW\":${screenSizeForSpawn.width},\"positionX\":$positionX,\"positionY\":$positionY,\"LIZARD_X\":$LIZARD_X_POSITION,\"halfWidth\":$halfW,\"deltaFromCenter\":${positionX - halfW}}", "H1")
+            // #endregion
+            if (!lizardExists) {
+                val lizardState = SpriteState()
+                lizardState.position = Offset(positionX, positionY)
+                val lizardSprite = SpriteData(
+                    spriteState = lizardState,
+                    spriteResourceId = LIZARD_IDLE_FRAMES[0],
+                    spriteType = SpriteType.LIZARD,
+                    layer = 1,
+                    sizeScale = LIZARD_SCALE,
+                    spriteSizeDp = spriteSizeDp,
+                    animationFrames = LIZARD_IDLE_FRAMES,
+                    currentFrameIndex = 0,
+                    isAnimated = true
+                )
+                sprites.add(lizardSprite)
+            } else {
+                val existingSprite = sprites[lizardIndex]
+                existingSprite.spriteState.position = Offset(positionX, positionY)
+                sprites[lizardIndex] = existingSprite.copy(
+                    sizeScale = LIZARD_SCALE
+                )
             }
         }
     }
@@ -603,63 +2564,197 @@ fun PriceDisplayScreen() {
             .fillMaxSize()
             .onGloballyPositioned { coordinates ->
                 screenSizeForSpawn = coordinates.size.toSize()
+                // #region agent log
+                agentLog("Box:onGloballyPositioned", "screen_size", "{\"width\":${screenSizeForSpawn.width},\"height\":${screenSizeForSpawn.height},\"halfWidth\":${screenSizeForSpawn.width / 2f}}", "H3")
+                // #endregion
             }
     ) {
-        // Remove sprites marked for deletion (Fiat USD after 4 collisions)
-        LaunchedEffect(spritesToRemove.size) {
-            if (spritesToRemove.isNotEmpty()) {
-                sprites.removeAll(spritesToRemove)
-                spritesToRemove.clear()
+        // Background: when chart visible draw bg1 (chart) + bg0 (ring); else draw bg3, bg2, bg0 (ring)
+        if (bg2Visible) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Spacer(modifier = Modifier.fillMaxHeight(BG2_CHART_TOP_OFFSET_FRACTION))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(BG2_CHART_HEIGHT_FRACTION)
+                ) {
+                    BtcCandleChart(candles = candleData, showAxisLabels = BG2_SHOW_AXIS_LABELS)
+                }
+                Spacer(modifier = Modifier.fillMaxHeight(1f - BG2_CHART_TOP_OFFSET_FRACTION - BG2_CHART_HEIGHT_FRACTION))
+            }
+            if (RING_FRAMES.isNotEmpty()) {
+                val idx = backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, RING_FRAMES.size - 1)
+                Image(
+                    painter = painterResource(RING_FRAMES[idx]),
+                    contentDescription = "Ring",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                    alignment = Alignment.BottomCenter
+                )
+            }
+        } else {
+            if (AUDIENCE_FRAMES_BY_RING.isNotEmpty()) {
+                val ringIdx = backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, AUDIENCE_FRAMES_BY_RING.size - 1)
+                val audienceIdx = backgroundFrameIndices.getOrElse(2) { 0 } % 3
+                val drawableId = AUDIENCE_FRAMES_BY_RING.getOrNull(ringIdx)?.getOrNull(audienceIdx)
+                if (drawableId != null) {
+                    Image(
+                        painter = painterResource(drawableId),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                        alignment = Alignment.TopCenter
+                    )
+                }
+            }
+            // bg2 signs: draw each spawn (0->1->2->Kill)
+            val signSizePx = (SIGN_SIZE_DP * density).toFloat()
+            signSpawns.forEach { sign ->
+                key(sign.id) {
+                    val drawableId = BUY_BTC_SIGN_FRAMES.getOrNull(sign.frameIndex) ?: return@forEach
+                    Image(
+                        painter = painterResource(drawableId),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .offset {
+                                IntOffset(
+                                    (sign.xPx - signSizePx / 2f).toInt(),
+                                    (sign.yPx - signSizePx / 2f).toInt()
+                                )
+                            }
+                            .size(SIGN_SIZE_DP.dp)
+                    )
+                }
+            }
+            if (BACKGROUND_LAYER_2_FRAMES.isNotEmpty()) {
+                val idx = backgroundFrameIndices.getOrElse(1) { 0 }.coerceIn(0, BACKGROUND_LAYER_2_FRAMES.size - 1)
+                Image(
+                    painter = painterResource(BACKGROUND_LAYER_2_FRAMES[idx]),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            if (RING_FRAMES.isNotEmpty()) {
+                val idx = backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, RING_FRAMES.size - 1)
+                Image(
+                    painter = painterResource(RING_FRAMES[idx]),
+                    contentDescription = "Ring",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                    alignment = Alignment.BottomCenter
+                )
             }
         }
-        
-        // Render all sprites
-        sprites.forEach { spriteData ->
-            BouncingSprite(
+        // Render sprites in layer order (1=Lizard, 2=Satoshi, 3=Cat)
+        val rangeY = BOBBING_MAX_Y_DOWN - BOBBING_MAX_Y_UP
+        val tY = if (rangeY != 0f) (movementOffsetY - BOBBING_MAX_Y_UP) / rangeY else 0.5f
+        val depthScaleMultiplier = (1f - SCALE_SMALLER_PERCENT / 100f) +
+            tY * ((1f + SCALE_LARGER_PERCENT / 100f) - (1f - SCALE_SMALLER_PERCENT / 100f))
+        sprites.sortedBy { it.layer }.forEach { spriteData ->
+            key(spriteData.spriteType) {
+            val xBobbingOffset = when (spriteData.spriteType) {
+                SpriteType.SATOSHI -> movementOffsetX
+                SpriteType.LIZARD -> -movementOffsetX
+                SpriteType.CAT -> 0f
+                else -> 0f
+            }
+            val yBobbingOffsetCat = if (spriteData.spriteType == SpriteType.CAT) 0f else movementOffsetY
+            val depthForSprite = if (spriteData.spriteType == SpriteType.CAT) 1f else depthScaleMultiplier
+            Sprite(
                 spriteData = spriteData,
-                allSprites = sprites.toList(),
-                onCloneRequest = onCloneRequest,
-                getLastGlobalCloneSpawnTime = { lastGlobalCloneSpawnTime },
-                getFreshSpriteData = { spriteState ->
-                    sprites.find { it.spriteState == spriteState }
+                xBobbingOffset = xBobbingOffset,
+                yBobbingOffset = yBobbingOffsetCat,
+                depthScaleMultiplier = depthForSprite,
+                contentDescription = "Sprite",
+                opponentInKO = when (spriteData.spriteType) {
+                    SpriteType.SATOSHI -> lizardKOPhase != null
+                    SpriteType.LIZARD -> satoshiKOPhase != null
+                    else -> false
                 },
-                currentlyDraggedSprite = currentlyDraggedSprite,
-                setCurrentlyDraggedSprite = { spriteState -> currentlyDraggedSprite = spriteState },
-                markSpriteForRemoval = { spriteToRemove -> spritesToRemove.add(spriteToRemove) },
-                updateSpriteData = { oldSprite, newSprite ->
-                    val index = sprites.indexOf(oldSprite)
-                    if (index >= 0) {
-                        sprites[index] = newSprite
+                onPlayOnceComplete = callback@{ spriteType ->
+                    // KO sequence is driven by LaunchedEffect timers; ignore callback for KO to avoid double-advance
+                    if (spriteType == SpriteType.SATOSHI && satoshiKOPhase != null) return@callback
+                    if (spriteType == SpriteType.LIZARD && lizardKOPhase != null) return@callback
+                    // Normal damage clear
+                    if (spriteType == SpriteType.SATOSHI && satoshiInDamage) {
+                        val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+                        if (satoshiSprite != null) {
+                            val idx = sprites.indexOf(satoshiSprite)
+                            sprites[idx] = satoshiSprite.copy(
+                                animationFrames = SATOSHI_IDLE_FRAMES,
+                                currentFrameIndex = 0, isAnimated = true,
+                                currentPunchType = null, currentHandSide = null, isPunching = false,
+                                currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                                sizeScale = SATOSHI_SCALE
+                            )
+                        }
+                        satoshiInDamage = false
+                        satoshiDamageType = null
+                        if (DAMAGE_DEBUG) {
+                            Log.d("DamageDebug", "{\"h\":\"A\",\"loc\":\"damage_completion_cleared\",\"ts\":${System.currentTimeMillis()}}")
+                        }
+                        agentLog("MainActivity:DamageCompletion", "satoshi_cleared", "{\"ts\":${System.currentTimeMillis()}}", "D")
                     }
-                },
-                initialOffset = if (spriteData.isOriginal) {
-                    when (spriteData.spriteType) {
-                        SpriteType.BITCOIN_ORANGE -> Offset(0f, 0f)
-                        SpriteType.BITCOIN -> Offset(1f, 0f)
-                        SpriteType.FIAT_USD -> Offset(0.5f, 0.5f) // Fiat USD spawns at random location, but use center as default
-                        SpriteType.CAT -> Offset(0.5f, 0.5f) // Cat spawns at center of screen
-                    }
-                } else {
-                    Offset(0.5f, 0.5f) // Clones start at center
-                },
-                        contentDescription = if (spriteData.isOriginal) {
-                    when (spriteData.spriteType) {
-                        SpriteType.BITCOIN_ORANGE -> "Bouncing sprite"
-                        SpriteType.BITCOIN -> "Bitcoin bouncing sprite"
-                        SpriteType.FIAT_USD -> "Fiat USD sprite"
-                        SpriteType.CAT -> "Cat sprite"
-                    }
-                } else {
-                    when (spriteData.spriteType) {
-                        SpriteType.FIAT_USD -> "Fiat USD sprite"
-                        SpriteType.CAT -> "Cat sprite"
-                        else -> "Cloned sprite"
+                    if (spriteType == SpriteType.LIZARD && lizardInDamage) {
+                        val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD }
+                        if (lizardSprite != null) {
+                            val idx = sprites.indexOf(lizardSprite)
+                            sprites[idx] = lizardSprite.copy(
+                                animationFrames = LIZARD_IDLE_FRAMES,
+                                currentFrameIndex = 0, isAnimated = true,
+                                currentPunchType = null, currentHandSide = null, isPunching = false,
+                                currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                                sizeScale = LIZARD_SCALE
+                            )
+                        }
+                        val wasBodyType = lizardDamageType == DamageAnimationType.LEFT_DAMAGE_BODY || lizardDamageType == DamageAnimationType.RIGHT_DAMAGE_BODY
+                        lizardInDamage = false
+                        lizardDamageType = null
+                        if (wasBodyType) agentLog("MainActivity:LizardDamageCompletion", "lizard_body_cleared", "{\"ts\":${System.currentTimeMillis()}}", "H2")
                     }
                 }
             )
+            }
         }
         
         // Price displays as overlays
+        // Center top - Time (block height) and elapsed since last update
+        val screenHeightDp = LocalConfiguration.current.screenHeightDp
+        val priceFontSize = (screenHeightDp / 20 * 0.4).sp
+        val blockHeightFontSize = (screenHeightDp / 20 * 0.8 * 0.9).sp  // 2× price font, reduced 10%
+        val blockLabelFontSize = (blockHeightFontSize.value * 0.6 * 1.25 * 0.9).sp  // reduced 10%
+        val timerFontSize = (priceFontSize.value * 0.6 * 1.25).sp  // same as Offense/Defense labels
+        val elapsedMs = lastBlockHeightUpdateTimeMs?.let { System.currentTimeMillis() - it } ?: 0L
+        val elapsedSeconds = (elapsedMs / 1000).toInt()
+        val elapsedH = elapsedSeconds / 3600
+        val elapsedM = (elapsedSeconds % 3600) / 60
+        val elapsedS = elapsedSeconds % 60
+        val elapsedString = "%02d:%02d:%02d".format(elapsedH, elapsedM, elapsedS)
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Time",
+                fontSize = blockLabelFontSize,
+                color = Color(0xFFF7931A)  // Bitcoin orange
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = blockHeight?.toString() ?: "—",
+                fontSize = blockHeightFontSize,
+                color = if (blockHeightFlashOn) Color.White else Color(0xFFF7931A)  // Bitcoin orange, flash white on update
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = elapsedString,
+                fontSize = timerFontSize,
+                color = if (elapsedMs >= TIMER_FLASH_WHEN_ELAPSED_MS && timerOverTenMinFlashOn) Color.White else Color(0xFFF7931A)
+            )
+        }
         // Top left - Binance
         PriceDisplay(
             label = "Binance BTC-USDT",
@@ -670,8 +2765,12 @@ fun PriceDisplayScreen() {
             sellVolume = binanceSellVolume,
             maxVolume = maxVolume,
             volumeAnimating = binanceVolumeAnimating,
+            modeLabel = if (isBinanceDefense) "Defense" else "Offense",
             modifier = Modifier.align(Alignment.TopStart),
-            pulseDirection = PulseDirection.LEFT_TO_RIGHT
+            pulseDirection = PulseDirection.LEFT_TO_RIGHT,
+            damagePoints = satoshiDamagePoints,
+            showDamageBar = true,
+            maxDamagePoints = MAX_DAMAGE_POINTS
         )
         
         // Top right - Coinbase
@@ -684,16 +2783,152 @@ fun PriceDisplayScreen() {
             sellVolume = coinbaseSellVolume,
             maxVolume = maxVolume,
             volumeAnimating = coinbaseVolumeAnimating,
+            modeLabel = if (isCoinbaseDefense) "Defense" else "Offense",
             modifier = Modifier.align(Alignment.TopEnd),
             horizontalAlignment = Alignment.End,
-            pulseDirection = PulseDirection.RIGHT_TO_LEFT
+            pulseDirection = PulseDirection.RIGHT_TO_LEFT,
+            damagePoints = lizardDamagePoints,
+            showDamageBar = true,
+            maxDamagePoints = MAX_DAMAGE_POINTS
         )
     }
 }
 
+// Generic sprite composable - renders sprite at its position
+@Composable
+fun Sprite(
+    spriteData: SpriteData,
+    xBobbingOffset: Float = 0f,
+    yBobbingOffset: Float = 0f,
+    depthScaleMultiplier: Float = 1f,
+    contentDescription: String = "Sprite",
+    opponentInKO: Boolean = false,
+    onPlayOnceComplete: ((SpriteType) -> Unit)? = null
+) {
+    val spriteSize = spriteData.spriteSizeDp.dp
+    val visualSize = spriteSize * spriteData.sizeScale * depthScaleMultiplier
+    
+    // Track current frame for animated sprites
+    var currentFrameIndex by remember { mutableStateOf(spriteData.currentFrameIndex) }
+    var currentResourceId by remember { mutableStateOf(spriteData.spriteResourceId) }
+    
+    // Create unique key for animations - only changes when new punch, defense, damage/one-shot, or opponent KO state
+    // Include opponentInKO so idle loop restarts when opponent exits KO (fixes frozen idle after KO)
+    val punchAnimationKey = remember(spriteData.currentPunchType, spriteData.currentHandSide, spriteData.currentDefenseType, spriteData.playAnimationOnce, opponentInKO) {
+        when {
+            spriteData.currentPunchType != null && spriteData.currentHandSide != null -> {
+                "${spriteData.currentPunchType}_${spriteData.currentHandSide}"
+            }
+            spriteData.currentDefenseType != null -> {
+                "defense_${spriteData.currentDefenseType}"
+            }
+            else -> {
+                "idle_${spriteData.animationFrames.hashCode()}_${spriteData.playAnimationOnce}_oppKO=$opponentInKO"
+            }
+        }
+    }
+    
+    // Update resource ID when animation frames change (but don't restart animation)
+    LaunchedEffect(spriteData.animationFrames) {
+        if (spriteData.animationFrames.isNotEmpty()) {
+            if (DAMAGE_DEBUG) {
+                Log.d("DamageDebug", "{\"h\":\"C\",\"loc\":\"sprite_animationFrames_reset\",\"spriteType\":\"${spriteData.spriteType}\",\"framesHash\":${spriteData.animationFrames.hashCode()},\"ts\":${System.currentTimeMillis()}}")
+        }
+        currentResourceId = spriteData.animationFrames[0]
+            currentFrameIndex = 0
+        }
+    }
+    
+    // Animate frames if sprite is animated - use unique key to prevent restarts
+    // Remove spriteData.isAnimated from dependencies to prevent restarts during animation
+    LaunchedEffect(punchAnimationKey) {
+        if (spriteData.spriteType == SpriteType.LIZARD && spriteData.isAnimated && spriteData.animationFrames.isNotEmpty()) {
+            // #region agent log
+            val branch = when {
+                spriteData.isPunching && spriteData.currentPunchType != null -> "punch"
+                spriteData.playAnimationOnce -> "playOnce"
+                else -> "loop"
+            }
+            agentLog("Sprite:LaunchedEffect", "Lizard_anim_branch", "{\"branch\":\"$branch\",\"playAnimationOnce\":${spriteData.playAnimationOnce},\"key\":\"$punchAnimationKey\"}", "E")
+            // #endregion
+        }
+        if (spriteData.isAnimated && spriteData.animationFrames.isNotEmpty()) {
+            if (spriteData.isPunching && spriteData.currentPunchType != null) {
+                // Play punch animation once, then stop
+                for (frameIndex in spriteData.animationFrames.indices) {
+                    currentFrameIndex = frameIndex
+                    currentResourceId = spriteData.animationFrames[frameIndex]
+                    delay(ANIMATION_FRAME_DELAY_MS)
+                }
+            } else if (spriteData.playAnimationOnce) {
+                // Play defense or damage animation once, then stop on last frame
+                val frameCount = spriteData.animationFrames.size
+                if (spriteData.spriteType == SpriteType.SATOSHI && frameCount in 3..5) {
+                    agentLog("Sprite:playOnce", "Satoshi_damage_start", "{\"frameCount\":$frameCount,\"key\":\"$punchAnimationKey\",\"ts\":${System.currentTimeMillis()}}", "A")
+                }
+                // #region agent log
+                if (spriteData.spriteType == SpriteType.LIZARD && frameCount == 3) agentLog("Sprite:playOnce", "Lizard_body_damage_start", "{\"frameCount\":$frameCount,\"key\":\"$punchAnimationKey\",\"ts\":${System.currentTimeMillis()}}", "H3")
+                // #endregion
+                for (frameIndex in spriteData.animationFrames.indices) {
+                    if (DAMAGE_DEBUG) {
+                        Log.d("DamageDebug", "{\"h\":\"C\",\"loc\":\"sprite_playOnce_frame\",\"spriteType\":\"${spriteData.spriteType}\",\"frameIndex\":$frameIndex,\"ts\":${System.currentTimeMillis()}}")
+                    }
+                    currentFrameIndex = frameIndex
+                    currentResourceId = spriteData.animationFrames[frameIndex]
+                    delay(ANIMATION_FRAME_DELAY_MS)
+                }
+                if (spriteData.spriteType == SpriteType.SATOSHI && frameCount in 3..5) {
+                    agentLog("Sprite:playOnce", "Satoshi_damage_done", "{\"frameCount\":$frameCount,\"ts\":${System.currentTimeMillis()}}", "B")
+                }
+                // #region agent log
+                if (spriteData.spriteType == SpriteType.LIZARD && frameCount == 3) agentLog("Sprite:playOnce", "Lizard_body_damage_done", "{\"frameCount\":$frameCount,\"ts\":${System.currentTimeMillis()}}", "H3")
+                // #endregion
+                onPlayOnceComplete?.invoke(spriteData.spriteType)
+            } else {
+                // Loop idle animation - sync to frame 0 when entering so no stale frame after key restart
+                val frames = spriteData.animationFrames
+                if (frames.isNotEmpty()) {
+                    currentFrameIndex = 0
+                    currentResourceId = frames[0]
+                }
+                while (true) {
+                    if (frames.isEmpty()) break
+                    currentFrameIndex = (currentFrameIndex + 1) % frames.size
+                    currentResourceId = frames[currentFrameIndex]
+                    delay(ANIMATION_FRAME_DELAY_MS)
+                }
+            }
+        }
+    }
+    
+    // Use animated frame or static resource
+    val displayResourceId = if (spriteData.isAnimated && spriteData.animationFrames.isNotEmpty()) {
+        currentResourceId
+    } else {
+        spriteData.spriteResourceId
+    }
+    
+    Image(
+        painter = painterResource(id = displayResourceId),
+        contentDescription = contentDescription,
+        modifier = Modifier
+            .offset {
+                // position is sprite center; use layout Density so half-size matches .size(visualSize)
+                val halfPx = visualSize.toPx() / 2f
+                val leftPx = spriteData.spriteState.position.x + xBobbingOffset - halfPx
+                val topPx = spriteData.spriteState.position.y + yBobbingOffset - halfPx
+                // #region agent log
+                agentLog("Sprite:offset", "layout_offset", "{\"spriteType\":\"${spriteData.spriteType}\",\"positionX\":${spriteData.spriteState.position.x},\"positionY\":${spriteData.spriteState.position.y},\"halfPx\":$halfPx,\"xBobbing\":$xBobbingOffset,\"leftPx\":$leftPx,\"centerX\":${spriteData.spriteState.position.x + xBobbingOffset}}", "H2")
+                // #endregion
+                IntOffset(leftPx.toInt(), topPx.toInt())
+            }
+            .size(visualSize)
+    )
+}
+
 // Helper function to find an empty spawn location on the screen
 fun findEmptySpawnLocation(
-    screenSize: androidx.compose.ui.geometry.Size,
+    screenSize: Size,
     spriteSizePx: Float,
     existingSprites: List<SpriteData>
 ): Offset? {
@@ -709,9 +2944,11 @@ fun findEmptySpawnLocation(
         // Check if position overlaps with any existing sprite
         var hasOverlap = false
         for (sprite in existingSprites) {
-            val existingPos = sprite.spriteState.position
-            val existingSizePx = spriteSizePx * sprite.sizeScale // Use scaled size for collision check
-            if (checkCollision(candidatePos, existingPos, existingSizePx)) {
+            val existingCenter = sprite.spriteState.position
+            val density = android.content.res.Resources.getSystem().displayMetrics.density
+            val existingSizePx = sprite.spriteSizeDp * density * sprite.sizeScale
+            val existingTopLeft = Offset(existingCenter.x - existingSizePx / 2f, existingCenter.y - existingSizePx / 2f)
+            if (checkOverlap(candidatePos, existingTopLeft, existingSizePx)) {
                 hasOverlap = true
                 break
             }
@@ -729,8 +2966,8 @@ fun findEmptySpawnLocation(
     return null
 }
 
-// Collision detection: Check if two sprites' bounding boxes overlap
-fun checkCollision(
+// Helper function to check if two sprites overlap
+fun checkOverlap(
     pos1: Offset,
     pos2: Offset,
     size: Float
@@ -748,1278 +2985,152 @@ fun checkCollision(
     return !(right1 < left2 || left1 > right2 || bottom1 < top2 || top1 > bottom2)
 }
 
-// Elastic collision physics: Calculate new velocities after collision
-// Uses reflection approach (like wall bounce) instead of complex impulse calculations
-fun calculateCollisionResponse(
-    pos1: Offset,
-    vel1: Offset,
-    pos2: Offset,
-    vel2: Offset,
-    size: Float
-): Pair<Offset, Offset> {
-    // Calculate collision normal (direction from sprite1 center to sprite2 center)
-    val center1 = Offset(pos1.x + size / 2f, pos1.y + size / 2f)
-    val center2 = Offset(pos2.x + size / 2f, pos2.y + size / 2f)
-    
-    val dx = center2.x - center1.x
-    val dy = center2.y - center1.y
-    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-    
-    // Handle perfect overlap (distance == 0)
-    if (distance == 0f) {
-        // Push sprites apart with opposite velocities
-        val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-        val pushSpeed = 3f
-        val normalX = kotlin.math.cos(randomAngle)
-        val normalY = kotlin.math.sin(randomAngle)
-        return Pair(
-            Offset(-pushSpeed * normalX, -pushSpeed * normalY),
-            Offset(pushSpeed * normalX, pushSpeed * normalY)
-        )
+// Determine punch type based on BUY volume percentage
+// volume: Current BUY volume from exchange
+// maxBuyVolume: Maximum BUY volume across both exchanges (for percentage calculation)
+fun getPunchTypeFromVolume(volume: Double?, maxBuyVolume: Double): PunchType? {
+    if (ENABLE_PUNCH_LOGS) {
+        Log.d("PunchDebug", "getPunchTypeFromVolume - volume: $volume, maxBuyVolume: $maxBuyVolume")
     }
     
-    // Normalized collision normal (like the wall surface)
-    val normalX = dx / distance
-    val normalY = dy / distance
+    if (volume == null || volume <= 0.0 || maxBuyVolume <= 0.0) {
+        if (ENABLE_PUNCH_LOGS) {
+            Log.d("PunchDebug", "getPunchTypeFromVolume - Returning null (volume=$volume, maxBuyVolume=$maxBuyVolume)")
+        }
+        return null
+    }
     
-    // Reflect velocity across the collision normal (same as wall bounce)
-    // Formula: v' = v - 2 * (v · n) * n
-    // This reflects the velocity vector across the normal line
+    // Calculate volume as percentage of max BUY volume
+    val volumePercent = (volume / maxBuyVolume).toFloat()
     
-    // For sprite1: reflect across normal pointing from sprite1 to sprite2
-    val dot1 = vel1.x * normalX + vel1.y * normalY
-    val newVel1X = vel1.x - 2f * dot1 * normalX
-    val newVel1Y = vel1.y - 2f * dot1 * normalY
+    val punchType = when {
+        volumePercent >= VOLUME_PERCENT_UPPERCUT_MIN && volumePercent <= VOLUME_PERCENT_UPPERCUT_MAX -> PunchType.UPPERCUT
+        volumePercent >= VOLUME_PERCENT_CROSS_MIN && volumePercent <= VOLUME_PERCENT_CROSS_MAX -> PunchType.CROSS
+        volumePercent >= VOLUME_PERCENT_HOOK_MIN && volumePercent <= VOLUME_PERCENT_HOOK_MAX -> PunchType.HOOK
+        volumePercent >= VOLUME_PERCENT_BODY_MIN && volumePercent <= VOLUME_PERCENT_BODY_MAX -> PunchType.BODY
+        volumePercent >= VOLUME_PERCENT_JAB_MIN && volumePercent <= VOLUME_PERCENT_JAB_MAX -> PunchType.JAB
+        else -> null  // Volume too low or invalid
+    }
     
-    // For sprite2: reflect across normal pointing from sprite2 to sprite1 (opposite direction)
-    val dot2 = vel2.x * (-normalX) + vel2.y * (-normalY)  // Opposite normal
-    val newVel2X = vel2.x - 2f * dot2 * (-normalX)
-    val newVel2Y = vel2.y - 2f * dot2 * (-normalY)
+    if (ENABLE_PUNCH_LOGS) {
+        Log.d("PunchDebug", "getPunchTypeFromVolume - volumePercent: ${(volumePercent * 100).toInt()}%, punchType: $punchType")
+    }
     
-    return Pair(Offset(newVel1X, newVel1Y), Offset(newVel2X, newVel2Y))
+    return punchType
 }
 
-@Composable
-fun BouncingSprite(
-    spriteData: SpriteData,
-    allSprites: List<SpriteData>, // Snapshot list for safe iteration (snapped per frame)
-    onCloneRequest: (SpriteData, SpriteData, Offset) -> Unit,
-    getLastGlobalCloneSpawnTime: () -> Long, // Function to get current global cooldown time
-    getFreshSpriteData: (SpriteState) -> SpriteData?, // Function to get fresh sprite data from list
-    currentlyDraggedSprite: SpriteState?, // Global state: which sprite is currently being dragged
-    setCurrentlyDraggedSprite: (SpriteState?) -> Unit, // Function to set the dragged sprite
-    markSpriteForRemoval: (SpriteData) -> Unit, // Function to mark sprite for removal
-    updateSpriteData: (SpriteData, SpriteData) -> Unit, // Function to update sprite data in list
-    initialOffset: Offset = Offset(0f, 0f), // Offset factor: 0.0 = left, 1.0 = right, etc.
-    contentDescription: String = "Bouncing sprite"
-) {
-    val spriteSize = 64.dp
-    val spriteSizePx = with(LocalDensity.current) { spriteSize.toPx() }
-    // Calculate effective sprite size based on sizeScale
-    val effectiveSpriteSizePx = spriteSizePx * spriteData.sizeScale
-    
-    var screenSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
-    val baseSpeed = 3f // Default speed in pixels per frame
-    val positionX = remember { Animatable(0f) }
-    val positionY = remember { Animatable(0f) }
-    
-    // Track current velocity as a mutable state
-    var currentVelocity by remember { mutableStateOf<Offset?>(null) }
-    var initialized by remember { mutableStateOf(false) }
-    var previousVelocity by remember { mutableStateOf<Offset?>(null) }
-    
-    // Track processed collisions per frame to prevent duplicate clone creation
-    val processedCollisions = remember { mutableSetOf<Pair<SpriteData, SpriteData>>() }
-    
-    // Track drag state for velocity calculation
-    var lastDragPosition by remember { mutableStateOf<Offset?>(null) }
-    var lastDragTime by remember { mutableStateOf(0L) }
-    var recentDragMovements by remember { mutableStateOf<List<Pair<Offset, Long>>>(emptyList()) }
-    var dragStartPosition by remember { mutableStateOf<Offset?>(null) }  // Screen position where drag started
-    var cumulativeDragAmount by remember { mutableStateOf(Offset.Zero) }  // Cumulative drag movement
-    val spriteState = remember(spriteData) { spriteData.spriteState }  // Remember spriteState to maintain stable reference
-    var localDraggedSpriteState by remember { mutableStateOf<SpriteState?>(null) }  // Local tracking of dragged sprite for this composable
-    val coroutineScope = rememberCoroutineScope()
-    
-    // Sync positionX and positionY with spriteState.position when being dragged
-    LaunchedEffect(spriteState.position, currentlyDraggedSprite == spriteState) {
-        if (currentlyDraggedSprite == spriteState) {
-            // Only sync when actively dragging to avoid conflicts with animation
-            // Validate position values before syncing to prevent NaN
-            val posX = spriteState.position.x
-            val posY = spriteState.position.y
-            val validX = if (posX.isNaN() || posX.isInfinite()) positionX.value else posX
-            val validY = if (posY.isNaN() || posY.isInfinite()) positionY.value else posY
-            positionX.snapTo(validX)
-            positionY.snapTo(validY)
+// Determine defense type based on BUY volume percentages from both exchanges
+// binanceBuyVolume: Current Binance BUY volume
+// coinbaseBuyVolume: Current Coinbase BUY volume
+// maxBinanceBuyVolume: Maximum Binance BUY volume (for percentage calculation)
+// maxCoinbaseBuyVolume: Maximum Coinbase BUY volume (for percentage calculation)
+fun getDefenseTypeFromVolume(
+    binanceBuyVolume: Double?,
+    coinbaseBuyVolume: Double?,
+    maxBinanceBuyVolume: Double,
+    maxCoinbaseBuyVolume: Double
+): DefenseType? {
+    // Calculate BUY volume percentages
+    val binanceBuyPercent = if (binanceBuyVolume != null && maxBinanceBuyVolume > 0.0) {
+        (binanceBuyVolume / maxBinanceBuyVolume).toFloat()
+    } else {
+        if (ENABLE_BLOCKING_LOGS) {
+            Log.d("BlockingDebug", "getDefenseTypeFromVolume - returning null (Binance volume/max invalid: buy=$binanceBuyVolume, max=$maxBinanceBuyVolume)")
         }
+        return null
     }
     
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .onGloballyPositioned { coordinates ->
-                screenSize = coordinates.size.toSize()
-            }
-    ) {
-        // Bouncing animation logic
-        // Include currentlyDraggedSprite in the key so the physics loop restarts
-        // when drag starts/ends, preventing stale drag state from pausing movement.
-        LaunchedEffect(screenSize, spriteData.speedMultiplier, currentlyDraggedSprite) {
-            if (screenSize.width == 0f || screenSize.height == 0f) return@LaunchedEffect
-            
-            val spriteState = spriteData.spriteState
-            
-            // Calculate effective speed based on multiplier
-            val effectiveSpeed = baseSpeed * spriteData.speedMultiplier
-            
-            // Initialize position based on initialOffset factor or use already set position (for clones)
-            if (!initialized && positionX.value == 0f && positionY.value == 0f) {
-                // Check if spriteState.position is already set (for clones spawned at collision point)
-                val alreadySetPosition = spriteState.position
-                if (alreadySetPosition != Offset.Zero) {
-                    // Use the position that was set when clone was created at collision point
-                    positionX.snapTo(alreadySetPosition.x)
-                    positionY.snapTo(alreadySetPosition.y)
-                } else {
-                    // Calculate position from initialOffset (for original sprites)
-                    val startX = (screenSize.width - spriteSizePx) * (0.25f + initialOffset.x * 0.5f)
-                    val startY = (screenSize.height - spriteSizePx) * (0.25f + initialOffset.y * 0.5f)
-                    
-                    positionX.snapTo(startX)
-                    positionY.snapTo(startY)
-                    spriteState.position = Offset(startX, startY)
-                }
-                
-                // Initialize with random direction velocity
-                val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                val initialVel = Offset(
-                    effectiveSpeed * kotlin.math.cos(randomAngle),
-                    effectiveSpeed * kotlin.math.sin(randomAngle)
-                )
-                currentVelocity = initialVel
-                spriteState.velocity = initialVel
-                previousVelocity = initialVel
-                initialized = true
-            } else {
-                // When LaunchedEffect re-runs (e.g., speedMultiplier changes), preserve existing velocity
-                // Don't normalize velocity here - let the physics loop handle it from spriteState.velocity
-                // This ensures user-applied fling velocities are never overwritten
-                val existingVelocity = spriteState.velocity
-                val existingMagnitude = kotlin.math.sqrt(existingVelocity.x * existingVelocity.x + existingVelocity.y * existingVelocity.y)
-                
-                // Only update velocity if it's zero or very small (indicating it needs initialization)
-                // Otherwise, preserve the existing velocity (which may be a user fling)
-                if (existingMagnitude < 0.1f) {
-                    // Velocity is essentially zero - initialize with random direction
-                    val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                    val newVel = Offset(
-                        effectiveSpeed * kotlin.math.cos(randomAngle),
-                        effectiveSpeed * kotlin.math.sin(randomAngle)
-                    )
-                    currentVelocity = newVel
-                    spriteState.velocity = newVel
-                } else {
-                    // Preserve existing velocity (could be user fling or collision-modified velocity)
-                    currentVelocity = existingVelocity
-                    // Don't modify spriteState.velocity - preserve user fling velocities
-                }
-            }
-            
-            // Initialize velocity variable for the loop - will be overwritten by spriteState.velocity each frame
-            var velocity = spriteState.velocity
-            
-            while (true) {
-                // Clear processed collisions at start of each frame
-                processedCollisions.clear()
-                
-                // Check if this sprite is being dragged - if so, pause normal physics
-                // Use spriteData.spriteState for stable reference comparison
-                if (currentlyDraggedSprite == spriteData.spriteState) {
-                    // Sprite is being dragged - skip normal physics updates
-                    // Collision detection is handled in the drag gesture handler
-                    delay(16) // ~60fps
-                    continue
-                }
-                
-                // Snapshot sprite data at the start of each frame to avoid concurrent modification
-                // This snapshot includes current cooldown timestamps for accurate checks
-                val frameSpriteSnapshot = allSprites.toList()
-                val spriteCooldownMap = frameSpriteSnapshot.associateBy { it.spriteState }
-                
-                // Recalculate effective speed in case multiplier changed during loop
-                val currentEffectiveSpeed = baseSpeed * spriteData.speedMultiplier
-                
-                // Get current position and velocity from shared state
-                // Validate position and velocity to prevent NaN propagation
-                val rawPos = spriteState.position
-                val rawVel = spriteState.velocity
-                val currentPos = Offset(
-                    if (rawPos.x.isNaN() || rawPos.x.isInfinite()) positionX.value else rawPos.x,
-                    if (rawPos.y.isNaN() || rawPos.y.isInfinite()) positionY.value else rawPos.y
-                )
-                velocity = Offset(
-                    if (rawVel.x.isNaN() || rawVel.x.isInfinite()) 0f else rawVel.x,
-                    if (rawVel.y.isNaN() || rawVel.y.isInfinite()) 0f else rawVel.y
-                )
-                
-                // Velocity is read directly from spriteState.velocity and used as-is
-                // No decay or normalization - sprite maintains constant speed from drag release
-                
-                // Calculate new position using velocity
-                var newX = currentPos.x + velocity.x
-                var newY = currentPos.y + velocity.y
-                
-                var newVelocityX = velocity.x
-                var newVelocityY = velocity.y
-                
-                // Check for collision with all other sprites before boundary checks
-                // Use frame snapshot to avoid concurrent modification exceptions
-                frameSpriteSnapshot.forEach { otherSpriteData ->
-                    if (otherSpriteData != spriteData) {
-                        val otherState = otherSpriteData.spriteState
-                        val otherPos = otherState.position
-                        val otherVel = otherState.velocity
-                        
-                        // Get fresh sprite data FIRST to ensure we have the latest sizeScale values
-                        // This is critical because sizeScale can change during collisions
-                        val freshSpriteForCollision = getFreshSpriteData(spriteState) ?: spriteData
-                        val freshOtherSpriteForCollision = getFreshSpriteData(otherState) ?: otherSpriteData
-                        
-                        // Calculate effective sizes for both sprites (for collision detection)
-                        val thisEffectiveSize = spriteSizePx * freshSpriteForCollision.sizeScale
-                        val otherEffectiveSize = spriteSizePx * freshOtherSpriteForCollision.sizeScale
-                        val avgSize = (thisEffectiveSize + otherEffectiveSize) / 2f
-                        
-                        // Check if sprites are currently colliding
-                        val isCurrentlyColliding = checkCollision(currentPos, otherPos, avgSize)
-                        
-                        if (isCurrentlyColliding) {
-                            val currentTime = System.currentTimeMillis()
-                            
-                            // Handle Fiat USD vs Bitcoin collisions
-                            // Use fresh sprite data already retrieved above
-                            val isFiatUsd = freshSpriteForCollision.spriteType == SpriteType.FIAT_USD
-                            val isOtherFiatUsd = freshOtherSpriteForCollision.spriteType == SpriteType.FIAT_USD
-                            val isBitcoin = freshOtherSpriteForCollision.spriteType == SpriteType.BITCOIN || freshOtherSpriteForCollision.spriteType == SpriteType.BITCOIN_ORANGE
-                            val isOtherBitcoin = freshSpriteForCollision.spriteType == SpriteType.BITCOIN || freshSpriteForCollision.spriteType == SpriteType.BITCOIN_ORANGE
-                            val isCat = freshSpriteForCollision.spriteType == SpriteType.CAT
-                            val isOtherCat = freshOtherSpriteForCollision.spriteType == SpriteType.CAT
-                            
-                            // Fiat USD vs Bitcoin: shrink Fiat USD
-                            if (isFiatUsd && isBitcoin) {
-                                val freshSprite = freshSpriteForCollision
-                                val timeSinceLastShrink = currentTime - freshSprite.lastShrinkCooldownTime
-                                
-                                // Check if cooldown has expired (3 seconds)
-                                if (timeSinceLastShrink >= FIAT_SHRINK_COOLDOWN_MS) {
-                                    // Shrink by 25%
-                                    val newSizeScale = freshSprite.sizeScale * 0.75f
-                                    val newCollisionCount = freshSprite.bitcoinCollisionCount + 1
-                                    
-                                    // Update sprite with new size and collision count
-                                    val updatedSprite = freshSprite.copy(
-                                        sizeScale = newSizeScale,
-                                        bitcoinCollisionCount = newCollisionCount,
-                                        lastShrinkCooldownTime = currentTime
-                                    )
-                                    updateSpriteData(freshSprite, updatedSprite)
-                                    
-                                    // If this is the 4th collision, mark for removal
-                                    if (newCollisionCount >= 4) {
-                                        markSpriteForRemoval(updatedSprite)
-                                    }
-                                }
-                            }
-                            
-                            // Bitcoin vs Fiat USD: shrink Fiat USD (other sprite)
-                            if (isOtherBitcoin && isOtherFiatUsd) {
-                                val freshOtherSprite = freshOtherSpriteForCollision
-                                val timeSinceLastShrink = currentTime - freshOtherSprite.lastShrinkCooldownTime
-                                
-                                // Check if cooldown has expired (3 seconds)
-                                if (timeSinceLastShrink >= FIAT_SHRINK_COOLDOWN_MS) {
-                                    // Shrink by 25%
-                                    val newSizeScale = freshOtherSprite.sizeScale * 0.75f
-                                    val newCollisionCount = freshOtherSprite.bitcoinCollisionCount + 1
-                                    
-                                    // Update sprite with new size and collision count
-                                    val updatedSprite = freshOtherSprite.copy(
-                                        sizeScale = newSizeScale,
-                                        bitcoinCollisionCount = newCollisionCount,
-                                        lastShrinkCooldownTime = currentTime
-                                    )
-                                    updateSpriteData(freshOtherSprite, updatedSprite)
-                                    
-                                    // If this is the 4th collision, mark for removal
-                                    if (newCollisionCount >= 4) {
-                                        markSpriteForRemoval(updatedSprite)
-                                    }
-                                }
-                            }
-                            
-                            // Fiat USD vs Fiat USD: grow both
-                            if (isFiatUsd && isOtherFiatUsd) {
-                                val freshSprite1 = freshSpriteForCollision
-                                val freshSprite2 = freshOtherSpriteForCollision
-                                
-                                // Grow sprite1
-                                val newSizeScale1 = if (freshSprite1.sizeScale < 1.0f) {
-                                    // If less than 100%, grow up to 100% first
-                                    (freshSprite1.sizeScale * 1.25f).coerceAtMost(1.0f)
-                                } else {
-                                    // If at or above 100%, can grow up to 125%
-                                    (freshSprite1.sizeScale * 1.25f).coerceAtMost(1.25f)
-                                }
-                                val updatedSprite1 = freshSprite1.copy(sizeScale = newSizeScale1)
-                                updateSpriteData(freshSprite1, updatedSprite1)
-                                
-                                // Grow sprite2
-                                val newSizeScale2 = if (freshSprite2.sizeScale < 1.0f) {
-                                    // If less than 100%, grow up to 100% first
-                                    (freshSprite2.sizeScale * 1.25f).coerceAtMost(1.0f)
-                                } else {
-                                    // If at or above 100%, can grow up to 125%
-                                    (freshSprite2.sizeScale * 1.25f).coerceAtMost(1.25f)
-                                }
-                                val updatedSprite2 = freshSprite2.copy(sizeScale = newSizeScale2)
-                                updateSpriteData(freshSprite2, updatedSprite2)
-                            }
-                            
-                            // Cat vs Bitcoin: Bitcoin bounces, cat continues unaffected
-                            // Cat vs Fiat USD: Fiat USD shrinks 25% and bounces, cat continues unaffected
-                            // Flag to skip normal collision response for cat (cat doesn't bounce)
-                            var skipNormalCollisionResponse = false
-                            
-                            if (isCat && (isBitcoin || isOtherFiatUsd)) {
-                                // Cat colliding with Bitcoin or Fiat USD - cat doesn't bounce
-                                skipNormalCollisionResponse = true
-                                
-                                // Only bounce the other sprite (Bitcoin or Fiat USD)
-                                if (isBitcoin) {
-                                    // Bitcoin bounces off cat - use normal collision response for Bitcoin only
-                                    // Calculate centers for collision normal
-                                    val center1 = Offset(currentPos.x + thisEffectiveSize / 2f, currentPos.y + thisEffectiveSize / 2f)
-                                    val center2 = Offset(otherPos.x + otherEffectiveSize / 2f, otherPos.y + otherEffectiveSize / 2f)
-                                    val dx = center2.x - center1.x
-                                    val dy = center2.y - center1.y
-                                    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                    
-                                    // Calculate collision normal (pointing from cat to Bitcoin)
-                                    val normalX: Float
-                                    val normalY: Float
-                                    if (distance > 0f) {
-                                        normalX = dx / distance
-                                        normalY = dy / distance
-                                    } else {
-                                        val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                                        normalX = kotlin.math.cos(randomAngle)
-                                        normalY = kotlin.math.sin(randomAngle)
-                                    }
-                                    
-                                    // Reflect Bitcoin's velocity across the collision normal (cat's velocity unchanged)
-                                    val dot = otherVel.x * normalX + otherVel.y * normalY
-                                    val newOtherVelX = otherVel.x - 2f * dot * normalX
-                                    val newOtherVelY = otherVel.y - 2f * dot * normalY
-                                    otherState.velocity = Offset(newOtherVelX, newOtherVelY)
-                                    
-                                    // Always separate sprites (move Bitcoin away from cat) - use larger separation to prevent sticking
-                                    val minDistance = avgSize * 1.5f // Increased minimum distance
-                                    val separation = if (distance < avgSize) {
-                                        // If overlapping, push apart with extra force
-                                        (minDistance - distance) * CAT_COLLISION_SEPARATION_OVERLAPPING
-                                    } else {
-                                        // If touching but not overlapping, still push further apart
-                                        (minDistance - distance) * CAT_COLLISION_SEPARATION_TOUCHING
-                                    }
-                                    val otherNewX = otherPos.x + normalX * separation.coerceAtLeast(0f)
-                                    val otherNewY = otherPos.y + normalY * separation.coerceAtLeast(0f)
-                                    otherState.position = Offset(
-                                        otherNewX.coerceIn(0f, screenSize.width - otherEffectiveSize),
-                                        otherNewY.coerceIn(0f, screenSize.height - otherEffectiveSize)
-                                    )
-                                } else if (isOtherFiatUsd) {
-                                    // Cat vs Fiat USD: Fiat USD shrinks 25% and bounces, cat continues
-                                    val freshFiatSprite = freshOtherSpriteForCollision
-                                    val newSizeScale = freshFiatSprite.sizeScale * 0.75f
-                                    val updatedFiatSprite = freshFiatSprite.copy(sizeScale = newSizeScale)
-                                    updateSpriteData(freshFiatSprite, updatedFiatSprite)
-                                    
-                                    // Calculate centers for collision normal
-                                    val center1 = Offset(currentPos.x + thisEffectiveSize / 2f, currentPos.y + thisEffectiveSize / 2f)
-                                    val center2 = Offset(otherPos.x + otherEffectiveSize / 2f, otherPos.y + otherEffectiveSize / 2f)
-                                    val dx = center2.x - center1.x
-                                    val dy = center2.y - center1.y
-                                    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                    
-                                    // Calculate collision normal (pointing from cat to Fiat USD)
-                                    val normalX: Float
-                                    val normalY: Float
-                                    if (distance > 0f) {
-                                        normalX = dx / distance
-                                        normalY = dy / distance
-                                    } else {
-                                        val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                                        normalX = kotlin.math.cos(randomAngle)
-                                        normalY = kotlin.math.sin(randomAngle)
-                                    }
-                                    
-                                    // Reflect Fiat USD's velocity across the collision normal (cat's velocity unchanged)
-                                    val dot = otherVel.x * normalX + otherVel.y * normalY
-                                    val newOtherVelX = otherVel.x - 2f * dot * normalX
-                                    val newOtherVelY = otherVel.y - 2f * dot * normalY
-                                    otherState.velocity = Offset(newOtherVelX, newOtherVelY)
-                                    
-                                    // Always separate sprites (move Fiat USD away from cat) - use larger separation to prevent sticking
-                                    val minDistance = avgSize * 1.5f // Increased minimum distance
-                                    val separation = if (distance < avgSize) {
-                                        // If overlapping, push apart with extra force
-                                        (minDistance - distance) * CAT_COLLISION_SEPARATION_OVERLAPPING
-                                    } else {
-                                        // If touching but not overlapping, still push further apart
-                                        (minDistance - distance) * CAT_COLLISION_SEPARATION_TOUCHING
-                                    }
-                                    val otherNewX = otherPos.x + normalX * separation.coerceAtLeast(0f)
-                                    val otherNewY = otherPos.y + normalY * separation.coerceAtLeast(0f)
-                                    otherState.position = Offset(
-                                        otherNewX.coerceIn(0f, screenSize.width - otherEffectiveSize),
-                                        otherNewY.coerceIn(0f, screenSize.height - otherEffectiveSize)
-                                    )
-                                }
-                            } else if (isOtherCat && (isOtherBitcoin || isFiatUsd)) {
-                                // Other sprite is cat, this sprite is Bitcoin or Fiat USD
-                                skipNormalCollisionResponse = true
-                                
-                                if (isOtherBitcoin) {
-                                    // Bitcoin bounces off cat - reflect this sprite's (Bitcoin's) velocity
-                                    val center1 = Offset(otherPos.x + otherEffectiveSize / 2f, otherPos.y + otherEffectiveSize / 2f)
-                                    val center2 = Offset(currentPos.x + thisEffectiveSize / 2f, currentPos.y + thisEffectiveSize / 2f)
-                                    val dx = center2.x - center1.x
-                                    val dy = center2.y - center1.y
-                                    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                    
-                                    val normalX: Float
-                                    val normalY: Float
-                                    if (distance > 0f) {
-                                        normalX = dx / distance
-                                        normalY = dy / distance
-                                    } else {
-                                        val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                                        normalX = kotlin.math.cos(randomAngle)
-                                        normalY = kotlin.math.sin(randomAngle)
-                                    }
-                                    
-                                    // Reflect this sprite's (Bitcoin's) velocity
-                                    val dot = velocity.x * normalX + velocity.y * normalY
-                                    newVelocityX = velocity.x - 2f * dot * normalX
-                                    newVelocityY = velocity.y - 2f * dot * normalY
-                                    
-                                    // Always separate sprites - use larger separation to prevent sticking
-                                    val minDistance = avgSize * 1.5f // Increased minimum distance
-                                    val separation = if (distance < avgSize) {
-                                        // If overlapping, push apart with extra force
-                                        (minDistance - distance) * CAT_COLLISION_SEPARATION_OVERLAPPING
-                                    } else {
-                                        // If touching but not overlapping, still push further apart
-                                        (minDistance - distance) * CAT_COLLISION_SEPARATION_TOUCHING
-                                    }
-                                    newX = currentPos.x - normalX * separation.coerceAtLeast(0f)
-                                    newY = currentPos.y - normalY * separation.coerceAtLeast(0f)
-                                } else if (isFiatUsd) {
-                                    // Fiat USD vs Cat: Fiat USD shrinks 25% and bounces
-                                    val freshFiatSprite = freshSpriteForCollision
-                                    val newSizeScale = freshFiatSprite.sizeScale * 0.75f
-                                    val updatedFiatSprite = freshFiatSprite.copy(sizeScale = newSizeScale)
-                                    updateSpriteData(freshFiatSprite, updatedFiatSprite)
-                                    
-                                    // Calculate collision normal
-                                    val center1 = Offset(otherPos.x + otherEffectiveSize / 2f, otherPos.y + otherEffectiveSize / 2f)
-                                    val center2 = Offset(currentPos.x + thisEffectiveSize / 2f, currentPos.y + thisEffectiveSize / 2f)
-                                    val dx = center2.x - center1.x
-                                    val dy = center2.y - center1.y
-                                    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                    
-                                    val normalX: Float
-                                    val normalY: Float
-                                    if (distance > 0f) {
-                                        normalX = dx / distance
-                                        normalY = dy / distance
-                                    } else {
-                                        val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                                        normalX = kotlin.math.cos(randomAngle)
-                                        normalY = kotlin.math.sin(randomAngle)
-                                    }
-                                    
-                                    // Reflect Fiat USD's (this sprite's) velocity
-                                    val dot = velocity.x * normalX + velocity.y * normalY
-                                    newVelocityX = velocity.x - 2f * dot * normalX
-                                    newVelocityY = velocity.y - 2f * dot * normalY
-                                    
-                                    // Always separate sprites - use larger separation to prevent sticking
-                                    val minDistance = avgSize * 1.5f // Increased minimum distance
-                                    val separation = if (distance < avgSize) {
-                                        // If overlapping, push apart with extra force
-                                        (minDistance - distance) * CAT_COLLISION_SEPARATION_OVERLAPPING
-                                    } else {
-                                        // If touching but not overlapping, still push further apart
-                                        (minDistance - distance) * CAT_COLLISION_SEPARATION_TOUCHING
-                                    }
-                                    newX = currentPos.x - normalX * separation.coerceAtLeast(0f)
-                                    newY = currentPos.y - normalY * separation.coerceAtLeast(0f)
-                                }
-                            }
-                            
-                            // Only perform normal collision response if cat collision handling didn't skip it
-                            if (!skipNormalCollisionResponse) {
-                                // Create a collision pair (ordered to ensure consistent deduplication)
-                                // Use fresh sprite data for collision pair to ensure consistency
-                                val collisionPair = if (freshSpriteForCollision.hashCode() < freshOtherSpriteForCollision.hashCode()) {
-                                    Pair(freshSpriteForCollision, freshOtherSpriteForCollision)
-                                } else {
-                                    Pair(freshOtherSpriteForCollision, freshSpriteForCollision)
-                                }
-                                
-                                // Calculate centers for collision normal and collision point (using effective sizes)
-                                val center1 = Offset(currentPos.x + thisEffectiveSize / 2f, currentPos.y + thisEffectiveSize / 2f)
-                                val center2 = Offset(otherPos.x + otherEffectiveSize / 2f, otherPos.y + otherEffectiveSize / 2f)
-                                val dx = center2.x - center1.x
-                                val dy = center2.y - center1.y
-                                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                
-                                // Calculate collision normal (pointing from sprite1 to sprite2)
-                                val normalX: Float
-                                val normalY: Float
-                                if (distance > 0f) {
-                                    normalX = dx / distance
-                                    normalY = dy / distance
-                                } else {
-                                    // If distance is 0, use a random direction to separate (unit vector)
-                                    val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                                    normalX = kotlin.math.cos(randomAngle)
-                                    normalY = kotlin.math.sin(randomAngle)
-                                }
-                                
-                                // Calculate collision point (midpoint between centers)
-                                val collisionCenter = Offset((center1.x + center2.x) / 2f, (center1.y + center2.y) / 2f)
-                                
-                                // Offset along collision normal to prevent immediate re-collision
-                                // Use 0.75x average sprite size to keep clone near collision point
-                                val offsetDistance = avgSize * 0.75f
-                                val offsetCenter = Offset(
-                                    collisionCenter.x + normalX * offsetDistance,
-                                    collisionCenter.y + normalY * offsetDistance
-                                )
-                                
-                                // Adjust to top-left corner position for sprite placement (use base size for clone)
-                                val collisionPoint = Offset(
-                                    offsetCenter.x - spriteSizePx / 2f,
-                                    offsetCenter.y - spriteSizePx / 2f
-                                )
-                                
-                                // Check global cooldown: if any clone was spawned recently, disable all spawning
-                                // Get fresh value each frame to see updates
-                                // Use currentTime already declared at the start of collision handler
-                                val lastGlobalSpawn = getLastGlobalCloneSpawnTime()
-                                val globalCooldownActive = (currentTime - lastGlobalSpawn) < CLONE_SPAWN_COOLDOWN_MS
-                                
-                                // Use fresh sprite data already retrieved above for clone creation
-                                // Trigger clone creation if:
-                                // 1. Collision not yet processed this frame
-                                // 2. At least one sprite is original
-                                // 3. Only the sprite with lower hash code spawns (prevents duplicate spawns)
-                                // 4. Global cooldown is not active (no clones spawned in last 3 seconds)
-                                if (!processedCollisions.contains(collisionPair) && 
-                                    (freshSpriteForCollision.isOriginal || freshOtherSpriteForCollision.isOriginal) &&
-                                    freshSpriteForCollision.hashCode() < freshOtherSpriteForCollision.hashCode() &&
-                                    !globalCooldownActive) {
-                                    processedCollisions.add(collisionPair)
-                                    onCloneRequest(freshSpriteForCollision, freshOtherSpriteForCollision, collisionPoint)
-                                }
-                                
-                                // If sprites are overlapping, separate them FIRST before calculating collision response
-                                if (distance < avgSize) {
-                                    // Push sprites apart along collision normal (use average size)
-                                    val minDistance = avgSize * 1.1f // Add 10% extra separation
-                                    val overlap = avgSize - distance
-                                    val separation = (minDistance - distance) / 2f * 1.5f // 1.5x separation force
-                                    
-                                    // Move this sprite away from the other
-                                    newX = currentPos.x - normalX * separation
-                                    newY = currentPos.y - normalY * separation
-                                    
-                                    // Also move the other sprite away from this one to prevent sticking
-                                    val otherNewX = otherPos.x + normalX * separation
-                                    val otherNewY = otherPos.y + normalY * separation
-                                    otherState.position = Offset(
-                                        otherNewX.coerceIn(0f, screenSize.width - otherEffectiveSize),
-                                        otherNewY.coerceIn(0f, screenSize.height - otherEffectiveSize)
-                                    )
-                                    
-                                    // Use separated positions for collision response calculation
-                                    val separatedPos1 = Offset(newX, newY)
-                                    val separatedPos2 = otherState.position
-                                    
-                                    // Calculate collision response using separated positions (use average size)
-                                    val (newVel1, newVel2) = calculateCollisionResponse(
-                                        separatedPos1, velocity,
-                                        separatedPos2, otherVel,
-                                        avgSize
-                                    )
-                                    
-                                    // Apply new velocities
-                                    newVelocityX = newVel1.x
-                                    newVelocityY = newVel1.y
-                                    otherState.velocity = newVel2
-                                    
-                                } else {
-                                    // Sprites are touching but not overlapping - just calculate collision response
-                                    val (newVel1, newVel2) = calculateCollisionResponse(
-                                        currentPos, velocity,
-                                        otherPos, otherVel,
-                                        avgSize
-                                    )
-                                    
-                                    // Apply new velocities
-                                    newVelocityX = newVel1.x
-                                    newVelocityY = newVel1.y
-                                    otherState.velocity = newVel2
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Get fresh sprite data to check current sizeScale
-                val freshSpriteForSize = getFreshSpriteData(spriteState) ?: spriteData
-                val currentEffectiveSize = spriteSizePx * freshSpriteForSize.sizeScale
-                
-                // Check horizontal boundaries (using effective size)
-                if (newX < 0) {
-                    newVelocityX = -newVelocityX
-                } else if (newX > screenSize.width - currentEffectiveSize) {
-                    newVelocityX = -newVelocityX
-                }
-                
-                // Check vertical boundaries (using effective size)
-                if (newY < 0) {
-                    newVelocityY = -newVelocityY
-                } else if (newY > screenSize.height - currentEffectiveSize) {
-                    newVelocityY = -newVelocityY
-                }
-                
-                // Update velocity if changed
-                if (newVelocityX != velocity.x || newVelocityY != velocity.y) {
-                    velocity = Offset(newVelocityX, newVelocityY)
-                    currentVelocity = velocity
-                }
-                
-                previousVelocity = velocity
-                
-                // Update shared state
-                spriteState.velocity = velocity
-
-                // Optional detailed physics logging for debugging sprite motion after release
-                if (ENABLE_DRAG_LOGS && spriteData.spriteType == SpriteType.BITCOIN_ORANGE) {
-                    val speed = kotlin.math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y)
-                    Log.d(
-                        "Physics",
-                        "Sprite PHYSICS - Type: ${spriteData.spriteType}, Pos: (${currentPos.x}, ${currentPos.y}), " +
-                                "Vel: (${velocity.x}, ${velocity.y}), Speed: $speed"
-                    )
-                }
-                
-                // Validate newX and newY before clamping (check for NaN or invalid values)
-                val validNewX = if (newX.isNaN() || newX.isInfinite()) currentPos.x else newX
-                val validNewY = if (newY.isNaN() || newY.isInfinite()) currentPos.y else newY
-                
-                // Calculate final position with boundary clamping (using effective size)
-                // Ensure screenSize is valid before using it
-                val currentEffectiveSizeForClamp = spriteSizePx * freshSpriteForSize.sizeScale
-                val maxX = if (screenSize.width > currentEffectiveSizeForClamp) screenSize.width - currentEffectiveSizeForClamp else 0f
-                val maxY = if (screenSize.height > currentEffectiveSizeForClamp) screenSize.height - currentEffectiveSizeForClamp else 0f
-                val clampedX = validNewX.coerceIn(0f, maxX.coerceAtLeast(0f))
-                val clampedY = validNewY.coerceIn(0f, maxY.coerceAtLeast(0f))
-                
-                // Final validation - ensure no NaN values before setting position
-                val finalX = if (clampedX.isNaN() || clampedX.isInfinite()) currentPos.x else clampedX
-                val finalY = if (clampedY.isNaN() || clampedY.isInfinite()) currentPos.y else clampedY
-                
-                spriteState.position = Offset(finalX, finalY)
-                
-                // Animate to new position (ensure target values are valid with multiple layers of validation)
-                // Get current animation values as safe fallbacks
-                val currentAnimX = positionX.value
-                val currentAnimY = positionY.value
-                
-                // First check: use currentPos as fallback if final is invalid
-                val safeX = if (finalX.isNaN() || finalX.isInfinite()) {
-                    if (currentPos.x.isNaN() || currentPos.x.isInfinite()) {
-                        if (currentAnimX.isNaN() || currentAnimX.isInfinite()) 0f else currentAnimX
-                    } else {
-                        currentPos.x
-                    }
-                } else {
-                    finalX
-                }
-                
-                val safeY = if (finalY.isNaN() || finalY.isInfinite()) {
-                    if (currentPos.y.isNaN() || currentPos.y.isInfinite()) {
-                        if (currentAnimY.isNaN() || currentAnimY.isInfinite()) 0f else currentAnimY
-                    } else {
-                        currentPos.y
-                    }
-                } else {
-                    finalY
-                }
-                
-                // Final check before animateTo - absolutely no NaN allowed
-                if (!safeX.isNaN() && !safeX.isInfinite() && !safeY.isNaN() && !safeY.isInfinite()) {
-                    positionX.animateTo(
-                        targetValue = safeX,
-                        animationSpec = tween(durationMillis = 16, easing = LinearEasing)
-                    )
-                    positionY.animateTo(
-                        targetValue = safeY,
-                        animationSpec = tween(durationMillis = 16, easing = LinearEasing)
-                    )
-                }
-                
-                delay(16) // ~60fps
-            }
+    val coinbaseBuyPercent = if (coinbaseBuyVolume != null && maxCoinbaseBuyVolume > 0.0) {
+        (coinbaseBuyVolume / maxCoinbaseBuyVolume).toFloat()
+    } else {
+        if (ENABLE_BLOCKING_LOGS) {
+            Log.d("BlockingDebug", "getDefenseTypeFromVolume - returning null (Coinbase volume/max invalid: buy=$coinbaseBuyVolume, max=$maxCoinbaseBuyVolume)")
         }
-        
-        // Draw sprite (use sizeScale for visual size)
-        val freshSpriteForVisual = getFreshSpriteData(spriteState) ?: spriteData
-        val visualSize = spriteSize * freshSpriteForVisual.sizeScale
-        
-        // Cat sprite animation frame tracking
-        var catAnimationFrame by remember { mutableStateOf(0) }
-        var catDirection by remember { mutableStateOf("down") } // Tracks movement direction ("up", "down", "left", "right", "down_left", "down_right", etc.)
-        
-        // Animate cat sprite frames when moving
-        LaunchedEffect(spriteData.spriteType == SpriteType.CAT, spriteState.velocity) {
-            if (spriteData.spriteType == SpriteType.CAT) {
-                val velocityMagnitude = kotlin.math.sqrt(
-                    spriteState.velocity.x * spriteState.velocity.x + 
-                    spriteState.velocity.y * spriteState.velocity.y
-                )
-                val isMoving = velocityMagnitude > 0.1f
-                
-                // Determine direction based on velocity
-                val absX = kotlin.math.abs(spriteState.velocity.x)
-                val absY = kotlin.math.abs(spriteState.velocity.y)
-                
-                // Check if movement is diagonal (both X and Y velocities are significant)
-                val ratio = if (absY > 0f) absX / absY else 0f
-                val isDiagonal = ratio >= CAT_DIAGONAL_RATIO_MIN && 
-                                 ratio <= CAT_DIAGONAL_RATIO_MAX && 
-                                 absX > CAT_DIAGONAL_MIN_VELOCITY && 
-                                 absY > CAT_DIAGONAL_MIN_VELOCITY
-                
-                if (isDiagonal) {
-                    // Diagonal movement detected
-                    if (spriteState.velocity.x < 0 && spriteState.velocity.y > 0) {
-                        // Moving down-left (negative X, positive Y)
-                        catDirection = "down_left"
-                    } else if (spriteState.velocity.x > 0 && spriteState.velocity.y > 0) {
-                        // Moving down-right (positive X, positive Y)
-                        catDirection = "down_right"
-                    } else {
-                        // Other diagonals not yet implemented, fall back to horizontal/vertical
-                        if (absX > absY) {
-                            if (spriteState.velocity.x < 0) {
-                                catDirection = "left"
-                            } else {
-                                catDirection = "right"
-                            }
-                        } else {
-                            if (spriteState.velocity.y < 0) {
-                                catDirection = "up"
-                            } else {
-                                catDirection = "down"
-                            }
-                        }
-                    }
-                } else if (absX > absY) {
-                    // Horizontal movement is dominant
-                    if (spriteState.velocity.x < 0) {
-                        catDirection = "left"
-                    } else {
-                        catDirection = "right"
-                    }
-                } else {
-                    // Vertical movement is dominant
-                    // Negative Y means moving up (towards top of screen)
-                    // Positive Y or zero means moving down
-                    if (spriteState.velocity.y < 0) {
-                        catDirection = "up"
-                    } else {
-                        catDirection = "down"
-                    }
-                }
-                
-                if (isMoving) {
-                    while (true) {
-                        catAnimationFrame = (catAnimationFrame + 1) % 2 // Alternate between 0 and 1
-                        delay(CAT_ANIMATION_FRAME_DELAY_MS)
-                    }
-                } else {
-                    catAnimationFrame = 0 // Idle frame when not moving
-                }
-            }
-        }
-        
-        // Select resource ID based on sprite type, direction, and animation frame
-        val resourceId = if (spriteData.spriteType == SpriteType.CAT) {
-            when (catDirection) {
-                "up" -> when (catAnimationFrame) {
-                    0 -> R.drawable.e_cat_up_1
-                    1 -> R.drawable.e_cat_up_2
-                    else -> R.drawable.e_cat_up_1
-                }
-                "down" -> when (catAnimationFrame) {
-                    0 -> R.drawable.e_cat_down_1
-                    1 -> R.drawable.e_cat_down_2
-                    else -> R.drawable.e_cat_down_1
-                }
-                "left" -> when (catAnimationFrame) {
-                    0 -> R.drawable.e_cat_left_1
-                    1 -> R.drawable.e_cat_left_2
-                    else -> R.drawable.e_cat_left_1
-                }
-                "right" -> when (catAnimationFrame) {
-                    0 -> R.drawable.e_cat_right_1
-                    1 -> R.drawable.e_cat_right_2
-                    else -> R.drawable.e_cat_right_1
-                }
-                "down_left" -> when (catAnimationFrame) {
-                    0 -> R.drawable.e_cat_down_left_1
-                    1 -> R.drawable.e_cat_down_left_2
-                    else -> R.drawable.e_cat_down_left_1
-                }
-                "down_right" -> when (catAnimationFrame) {
-                    0 -> R.drawable.e_cat_down_right_1
-                    1 -> R.drawable.e_cat_down_right_2
-                    else -> R.drawable.e_cat_down_right_1
-                }
-                else -> R.drawable.e_cat_down_1 // Default to down frames
-            }
+        return null
+    }
+    
+    // For Head/Body Block: use highest BUY % to resolve conflicts between exchanges
+    val maxBuyPercent = maxOf(binanceBuyPercent, coinbaseBuyPercent)
+    
+    // Check for Head Block: highest BUY % between 67-100%
+    val isHeadBlock = maxBuyPercent >= DEFENSE_HEAD_BLOCK_MIN && maxBuyPercent <= DEFENSE_HEAD_BLOCK_MAX
+    
+    // Check for Body Block: highest BUY % between 24-66%
+    val isBodyBlock = maxBuyPercent >= DEFENSE_BODY_BLOCK_MIN && maxBuyPercent <= DEFENSE_BODY_BLOCK_MAX
+    
+    // Check for Dodge Left: Binance between 0-33%
+    val isDodgeLeft = binanceBuyPercent >= DEFENSE_DODGE_LEFT_MIN && 
+                      binanceBuyPercent <= DEFENSE_DODGE_LEFT_MAX
+    
+    // Check for Dodge Right: Coinbase between 0-33%
+    val isDodgeRight = coinbaseBuyPercent >= DEFENSE_DODGE_RIGHT_MIN && 
+                       coinbaseBuyPercent <= DEFENSE_DODGE_RIGHT_MAX
+    
+    // Priority: Head Block > Body Block > Dodge (random if both eligible)
+    val defenseType = when {
+        isHeadBlock -> DefenseType.HEAD_BLOCK
+        isBodyBlock -> DefenseType.BODY_BLOCK
+        isDodgeLeft && isDodgeRight -> DefenseType.DODGE_LEFT  // deterministic when both in range
+        isDodgeLeft -> DefenseType.DODGE_LEFT
+        isDodgeRight -> DefenseType.DODGE_RIGHT
+        else -> null
+    }
+    
+    if (ENABLE_BLOCKING_LOGS) {
+        if (defenseType == null) {
+            Log.d("BlockingDebug", "getDefenseTypeFromVolume - no defense type - Binance BUY %: ${"%.2f".format(binanceBuyPercent * 100)}%, Coinbase BUY %: ${"%.2f".format(coinbaseBuyPercent * 100)}%")
         } else {
-            spriteData.spriteResourceId
+            Log.d("BlockingDebug", "getDefenseTypeFromVolume - Binance BUY %: ${"%.2f".format(binanceBuyPercent * 100)}%, Coinbase BUY %: ${"%.2f".format(coinbaseBuyPercent * 100)}%, defenseType: $defenseType")
         }
-        
-        androidx.compose.foundation.Image(
-            painter = painterResource(id = resourceId),
-            contentDescription = contentDescription,
-            modifier = Modifier
-                .offset {
-                    IntOffset(
-                        positionX.value.toInt(),
-                        positionY.value.toInt()
-                    )
-                }
-                .size(visualSize)
-                .pointerInput(spriteData) {
-                    detectDragGestures(
-                        onDragStart = { offset ->
-                            // Fiat USD and Cat sprites cannot be dragged - ignore drag gestures
-                            if (spriteData.spriteType == SpriteType.FIAT_USD || spriteData.spriteType == SpriteType.CAT) {
-                                return@detectDragGestures
-                            }
-                            
-                            // Check if any sprite is already being dragged
-                            if (currentlyDraggedSprite == null) {
-                                // Claim this sprite as being dragged (use spriteData.spriteState for stable reference)
-                                setCurrentlyDraggedSprite(spriteData.spriteState)
-                                localDraggedSpriteState = spriteData.spriteState  // Also store locally for reliable tracking
-                                // Store initial screen position where drag started (offset is already in screen coordinates)
-                                // Add sprite center offset to get the sprite center position
-                                val spriteCenterAtStart = Offset(
-                                    spriteData.spriteState.position.x + spriteSizePx / 2f,
-                                    spriteData.spriteState.position.y + spriteSizePx / 2f
-                                )
-                                dragStartPosition = spriteCenterAtStart
-                                cumulativeDragAmount = Offset.Zero
-                                // Store initial position and time for velocity calculation
-                                lastDragPosition = offset
-                                lastDragTime = System.currentTimeMillis()
-                                recentDragMovements = emptyList()
-                                
-                                if (ENABLE_DRAG_LOGS) {
-                                    Log.d("DragGesture", "Sprite SELECTED - Type: ${spriteData.spriteType}, Start Position: (${spriteData.spriteState.position.x}, ${spriteData.spriteState.position.y}), Touch Position: (${offset.x}, ${offset.y}), Local stored: ${System.identityHashCode(localDraggedSpriteState)}")
-                                }
-                            } else {
-                                if (ENABLE_DRAG_LOGS) {
-                                    Log.d("DragGesture", "Sprite selection REJECTED - Another sprite is already being dragged (Type: ${spriteData.spriteType})")
-                                }
-                            }
-                        },
-                        onDrag = { change, dragAmount ->
-                            // Only process if this sprite is the one being dragged (check both global and local state)
-                            if (localDraggedSpriteState == spriteData.spriteState || currentlyDraggedSprite == spriteData.spriteState) {
-                                val currentTime = System.currentTimeMillis()
-                                
-                                // Accumulate drag amount to track total movement from drag start
-                                cumulativeDragAmount = Offset(
-                                    cumulativeDragAmount.x + dragAmount.x,
-                                    cumulativeDragAmount.y + dragAmount.y
-                                )
-                                
-                                // Calculate current screen position = initial center position + cumulative drag
-                                val currentScreenPosition = if (dragStartPosition != null) {
-                                    Offset(
-                                        dragStartPosition!!.x + cumulativeDragAmount.x,
-                                        dragStartPosition!!.y + cumulativeDragAmount.y
-                                    )
-                                } else {
-                                    // Fallback: use current sprite center + drag amount
-                                    Offset(
-                                        spriteData.spriteState.position.x + spriteSizePx / 2f + cumulativeDragAmount.x,
-                                        spriteData.spriteState.position.y + spriteSizePx / 2f + cumulativeDragAmount.y
-                                    )
-                                }
-                                
-                                // Validate screen position - check for NaN or invalid values
-                                val validScreenX = if (currentScreenPosition.x.isNaN() || currentScreenPosition.x.isInfinite()) {
-                                    spriteData.spriteState.position.x + spriteSizePx / 2f
-                                } else {
-                                    currentScreenPosition.x
-                                }
-                                val validScreenY = if (currentScreenPosition.y.isNaN() || currentScreenPosition.y.isInfinite()) {
-                                    spriteData.spriteState.position.y + spriteSizePx / 2f
-                                } else {
-                                    currentScreenPosition.y
-                                }
-                                
-                                // Track recent drag movements for velocity calculation (keep last 100ms)
-                                recentDragMovements = (recentDragMovements + (dragAmount to currentTime))
-                                    .filter { (_, time) -> currentTime - time <= 100L }
-                                
-                                // Update sprite position to follow finger (account for sprite center offset)
-                                // Calculate sprite top-left from screen center position
-                                val newPos = Offset(
-                                    validScreenX - spriteSizePx / 2f,
-                                    validScreenY - spriteSizePx / 2f
-                                )
-                                
-                                // Keep sprite within screen bounds (ensure screenSize is valid)
-                                val maxX = if (screenSize.width > 0) screenSize.width - spriteSizePx else 0f
-                                val maxY = if (screenSize.height > 0) screenSize.height - spriteSizePx else 0f
-                                val boundedX = newPos.x.coerceIn(0f, maxX.coerceAtLeast(0f))
-                                val boundedY = newPos.y.coerceIn(0f, maxY.coerceAtLeast(0f))
-                                
-                                // Final validation - ensure no NaN values
-                                val finalX = if (boundedX.isNaN() || boundedX.isInfinite()) spriteData.spriteState.position.x else boundedX
-                                val finalY = if (boundedY.isNaN() || boundedY.isInfinite()) spriteData.spriteState.position.y else boundedY
-                                
-                                spriteData.spriteState.position = Offset(finalX, finalY)
-                                
-                                // Immediately update Animatable values to make sprite follow finger
-                                // Use coroutine scope to call snapTo (required for suspend function)
-                                coroutineScope.launch {
-                                    // Validate before snapping
-                                    val safeX = if (finalX.isNaN() || finalX.isInfinite()) positionX.value else finalX
-                                    val safeY = if (finalY.isNaN() || finalY.isInfinite()) positionY.value else finalY
-                                    if (!safeX.isNaN() && !safeX.isInfinite() && !safeY.isNaN() && !safeY.isInfinite()) {
-                                        positionX.snapTo(safeX)
-                                        positionY.snapTo(safeY)
-                                    }
-                                }
-                                
-                                // Track position and time for velocity calculation
-                                lastDragPosition = currentScreenPosition
-                                lastDragTime = currentTime
-                                
-                                if (ENABLE_DRAG_LOGS) {
-                                    // Log drag direction and movement
-                                    val dragDirection = if (dragAmount.x != 0f || dragAmount.y != 0f) {
-                                        val angle = kotlin.math.atan2(dragAmount.y, dragAmount.x) * 180f / kotlin.math.PI.toFloat()
-                                        val direction = when {
-                                            angle >= -22.5f && angle < 22.5f -> "RIGHT"
-                                            angle >= 22.5f && angle < 67.5f -> "DOWN-RIGHT"
-                                            angle >= 67.5f && angle < 112.5f -> "DOWN"
-                                            angle >= 112.5f && angle < 157.5f -> "DOWN-LEFT"
-                                            angle >= 157.5f || angle < -157.5f -> "LEFT"
-                                            angle >= -157.5f && angle < -112.5f -> "UP-LEFT"
-                                            angle >= -112.5f && angle < -67.5f -> "UP"
-                                            else -> "UP-RIGHT"
-                                        }
-                                        "Angle: ${angle.toInt()}° ($direction)"
-                                    } else {
-                                        "NONE"
-                                    }
-                                    val dragDistance = kotlin.math.sqrt(dragAmount.x * dragAmount.x + dragAmount.y * dragAmount.y)
-                                    Log.d("DragGesture", "Sprite DRAGGING - Type: ${spriteData.spriteType}, Position: (${finalX}, ${finalY}), Drag Amount: (${dragAmount.x}, ${dragAmount.y}), Distance: ${dragDistance.toInt()}px, Direction: $dragDirection")
-                                }
-                                
-                                // Check for collisions with other sprites during drag
-                                val frameSpriteSnapshot = allSprites.toList()
-                                frameSpriteSnapshot.forEach { otherSpriteData ->
-                                    if (otherSpriteData != spriteData) {
-                                        val otherState = otherSpriteData.spriteState
-                                        val otherPos = otherState.position
-                                        
-                                        // Calculate effective sizes for collision detection during drag (get fresh sprite data)
-                                val freshDraggedSprite = getFreshSpriteData(spriteData.spriteState) ?: spriteData
-                                val draggedEffectiveSize = spriteSizePx * freshDraggedSprite.sizeScale
-                                val otherEffectiveSizeDrag = spriteSizePx * otherSpriteData.sizeScale
-                                val avgSizeDrag = (draggedEffectiveSize + otherEffectiveSizeDrag) / 2f
-                                
-                                // Check if sprites are colliding
-                                        val isCurrentlyColliding = checkCollision(
-                                            spriteData.spriteState.position,
-                                            otherPos,
-                                            avgSizeDrag
-                                        )
-                                        
-                                        if (isCurrentlyColliding) {
-                                            // Calculate collision response
-                                            val center1 = Offset(
-                                                spriteData.spriteState.position.x + spriteSizePx / 2f,
-                                                spriteData.spriteState.position.y + spriteSizePx / 2f
-                                            )
-                                            val center2 = Offset(
-                                                otherPos.x + spriteSizePx / 2f,
-                                                otherPos.y + spriteSizePx / 2f
-                                            )
-                                            val dx = center2.x - center1.x
-                                            val dy = center2.y - center1.y
-                                            val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                            
-                                            // Calculate collision normal
-                                            val normalX: Float
-                                            val normalY: Float
-                                            if (distance > 0f) {
-                                                normalX = dx / distance
-                                                normalY = dy / distance
-                                            } else {
-                                                val randomAngle = kotlin.random.Random.nextFloat() * 2f * kotlin.math.PI.toFloat()
-                                                normalX = kotlin.math.cos(randomAngle)
-                                                normalY = kotlin.math.sin(randomAngle)
-                                            }
-                                            
-                                            // If sprites are overlapping, separate them (using effective sizes)
-                                            if (distance < avgSizeDrag) {
-                                                val minDistance = avgSizeDrag * 1.1f
-                                                val overlap = avgSizeDrag - distance
-                                                val separation = (minDistance - distance) / 2f * 1.5f
-                                                
-                                                // Move dragged sprite away from other sprite
-                                                val newDraggedX = (spriteData.spriteState.position.x - normalX * separation)
-                                                    .coerceIn(0f, screenSize.width - draggedEffectiveSize)
-                                                val newDraggedY = (spriteData.spriteState.position.y - normalY * separation)
-                                                    .coerceIn(0f, screenSize.height - draggedEffectiveSize)
-                                                
-                                                spriteData.spriteState.position = Offset(newDraggedX, newDraggedY)
-                                                
-                                                // Immediately update Animatable values during collision
-                                                coroutineScope.launch {
-                                                    val safeX = if (newDraggedX.isNaN() || newDraggedX.isInfinite()) positionX.value else newDraggedX
-                                                    val safeY = if (newDraggedY.isNaN() || newDraggedY.isInfinite()) positionY.value else newDraggedY
-                                                    if (!safeX.isNaN() && !safeX.isInfinite() && !safeY.isNaN() && !safeY.isInfinite()) {
-                                                        positionX.snapTo(safeX)
-                                                        positionY.snapTo(safeY)
-                                                    }
-                                                }
-                                                
-                                                // Also move the other sprite away (if it's not being dragged)
-                                                if (currentlyDraggedSprite != otherState) {
-                                                    val otherNewX = (otherPos.x + normalX * separation)
-                                                        .coerceIn(0f, screenSize.width - otherEffectiveSizeDrag)
-                                                    val otherNewY = (otherPos.y + normalY * separation)
-                                                        .coerceIn(0f, screenSize.height - otherEffectiveSizeDrag)
-                                                    otherState.position = Offset(otherNewX, otherNewY)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        onDragEnd = {
-                            if (ENABLE_DRAG_LOGS) {
-                                Log.d("DragGesture", "onDragEnd CALLED - Type: ${spriteData.spriteType}, currentlyDraggedSprite == spriteState: ${currentlyDraggedSprite == spriteData.spriteState}, localDraggedSpriteState == spriteState: ${localDraggedSpriteState == spriteData.spriteState}, currentlyDraggedSprite identity: ${System.identityHashCode(currentlyDraggedSprite)}, localDraggedSpriteState identity: ${System.identityHashCode(localDraggedSpriteState)}, spriteState identity: ${System.identityHashCode(spriteData.spriteState)}")
-                            }
-                            // Only process if this sprite was the one being dragged (check local state first, then global)
-                            val wasDragged = localDraggedSpriteState == spriteData.spriteState || currentlyDraggedSprite == spriteData.spriteState
-                            if (wasDragged) {
-                                // Calculate velocity from recent drag movements
-                                val currentTime = System.currentTimeMillis()
-                                
-                                if (ENABLE_DRAG_LOGS) {
-                                    Log.d("DragGesture", "onDragEnd - recentDragMovements.size: ${recentDragMovements.size}, lastDragPosition: $lastDragPosition, lastDragTime: $lastDragTime")
-                                }
-                                
-                                val flingVelocity = if (recentDragMovements.isNotEmpty()) {
-                                    // Use the most recent movements (last 50-100ms) for velocity calculation
-                                    val recentMovements = recentDragMovements.takeLast(10) // Use last 10 movements
-                                    
-                                    // Sum recent drag movements
-                                    val totalMovement = recentMovements.fold(Offset.Zero) { acc, (movement, _) ->
-                                        Offset(acc.x + movement.x, acc.y + movement.y)
-                                    }
-                                    
-                                    // Calculate time span of recent movements
-                                    val timeSpan = if (recentMovements.size > 1) {
-                                        val oldestTime = recentMovements.first().second
-                                        val newestTime = recentMovements.last().second
-                                        (newestTime - oldestTime).coerceAtLeast(1L).toFloat()
-                                    } else {
-                                        16f // Default to one frame if only one movement
-                                    }
-                                    
-                                    // Convert drag amount (pixels) to velocity (pixels per frame at 60fps)
-                                    // Divide by timeSpan (ms) and multiply by 16 (ms per frame at 60fps)
-                                    // Use a multiplier to make the velocity more noticeable (scale up by 50x for better feel)
-                                    val velocityMultiplier = 50f
-                                    val calculatedVelocity = Offset(
-                                        (totalMovement.x / timeSpan) * (16f / 1000f) * velocityMultiplier,
-                                        (totalMovement.y / timeSpan) * (16f / 1000f) * velocityMultiplier
-                                    )
-                                    
-                                    if (ENABLE_DRAG_LOGS) {
-                                        Log.d("DragGesture", "onDragEnd - totalMovement: (${totalMovement.x}, ${totalMovement.y}), timeSpan: ${timeSpan}ms, calculatedVelocity: (${calculatedVelocity.x}, ${calculatedVelocity.y})")
-                                    }
-                                    
-                                    calculatedVelocity
-                                } else {
-                                    // Fallback: calculate velocity from last drag position and current position
-                                    val lastPosValue = lastDragPosition  // Store in local variable for smart cast
-                                    if (lastPosValue != null && lastDragTime > 0L) {
-                                        val timeDelta = (currentTime - lastDragTime).coerceAtLeast(1L).toFloat()
-                                        val currentPos = spriteData.spriteState.position
-                                        val lastPos = Offset(
-                                            lastPosValue.x - spriteSizePx / 2f,
-                                            lastPosValue.y - spriteSizePx / 2f
-                                        )
-                                        val positionDelta = Offset(
-                                            currentPos.x - lastPos.x,
-                                            currentPos.y - lastPos.y
-                                        )
-                                        
-                                        // Convert to pixels per frame
-                                        // Use a multiplier to make the velocity more noticeable (scale up by 50x for better feel)
-                                        val velocityMultiplier = 50f
-                                        val fallbackVelocity = Offset(
-                                            (positionDelta.x / timeDelta) * (16f / 1000f) * velocityMultiplier,
-                                            (positionDelta.y / timeDelta) * (16f / 1000f) * velocityMultiplier
-                                        )
-                                        
-                                        if (ENABLE_DRAG_LOGS) {
-                                            Log.d("DragGesture", "onDragEnd - Using fallback velocity calculation: positionDelta: (${positionDelta.x}, ${positionDelta.y}), timeDelta: ${timeDelta}ms, fallbackVelocity: (${fallbackVelocity.x}, ${fallbackVelocity.y})")
-                                        }
-                                        
-                                        fallbackVelocity
-                                    } else {
-                                        if (ENABLE_DRAG_LOGS) {
-                                            Log.d("DragGesture", "onDragEnd - No velocity data available, using zero velocity")
-                                        }
-                                        Offset.Zero
-                                    }
-                                }
-                                
-                                // Cap maximum velocity to prevent extreme speeds
-                                val maxVelocity = 50f
-                                val velocityMagnitude = kotlin.math.sqrt(
-                                    flingVelocity.x * flingVelocity.x + flingVelocity.y * flingVelocity.y
-                                )
-                                
-                                // Ensure velocity magnitude is never negative (shouldn't happen, but validate)
-                                val safeMagnitude = velocityMagnitude.coerceAtLeast(0f)
-                                
-                                val cappedVelocity = if (safeMagnitude > maxVelocity) {
-                                    val scale = maxVelocity / safeMagnitude
-                                    Offset(flingVelocity.x * scale, flingVelocity.y * scale)
-                                } else {
-                                    flingVelocity
-                                }
-                                
-                                // Validate capped velocity - ensure no NaN or invalid values
-                                val finalVelocity = Offset(
-                                    if (cappedVelocity.x.isNaN() || cappedVelocity.x.isInfinite()) 0f else cappedVelocity.x,
-                                    if (cappedVelocity.y.isNaN() || cappedVelocity.y.isInfinite()) 0f else cappedVelocity.y
-                                )
-                                
-                                // Ensure velocity magnitude is positive (at least a minimum threshold for movement)
-                                val finalMagnitude = kotlin.math.sqrt(
-                                    finalVelocity.x * finalVelocity.x + finalVelocity.y * finalVelocity.y
-                                )
-                                
-                                if (ENABLE_DRAG_LOGS) {
-                                    Log.d("DragGesture", "onDragEnd - flingVelocity: (${flingVelocity.x}, ${flingVelocity.y}), magnitude: $velocityMagnitude, cappedVelocity: (${cappedVelocity.x}, ${cappedVelocity.y}), finalVelocity: (${finalVelocity.x}, ${finalVelocity.y}), finalMagnitude: $finalMagnitude")
-                                }
-                                
-                                // Set velocity directly - sprite will continue moving at this speed indefinitely
-                                // Note: Negative x/y components are normal (negative x = left, negative y = up)
-                                spriteData.spriteState.velocity = finalVelocity
-                                
-                                if (ENABLE_DRAG_LOGS) {
-                                    Log.d("DragGesture", "onDragEnd - Set spriteState.velocity: (${finalVelocity.x}, ${finalVelocity.y}), magnitude: $finalMagnitude")
-                                }
-                                
-                                if (ENABLE_DRAG_LOGS) {
-                                    // Log release with momentum and direction
-                                    val momentumMagnitude = kotlin.math.sqrt(
-                                        cappedVelocity.x * cappedVelocity.x + cappedVelocity.y * cappedVelocity.y
-                                    )
-                                    val momentumAngle = if (cappedVelocity.x != 0f || cappedVelocity.y != 0f) {
-                                        kotlin.math.atan2(cappedVelocity.y, cappedVelocity.x) * 180f / kotlin.math.PI.toFloat()
-                                    } else {
-                                        0f
-                                    }
-                                    val momentumDirection = when {
-                                        momentumAngle >= -22.5f && momentumAngle < 22.5f -> "RIGHT"
-                                        momentumAngle >= 22.5f && momentumAngle < 67.5f -> "DOWN-RIGHT"
-                                        momentumAngle >= 67.5f && momentumAngle < 112.5f -> "DOWN"
-                                        momentumAngle >= 112.5f && momentumAngle < 157.5f -> "DOWN-LEFT"
-                                        momentumAngle >= 157.5f || momentumAngle < -157.5f -> "LEFT"
-                                        momentumAngle >= -157.5f && momentumAngle < -112.5f -> "UP-LEFT"
-                                        momentumAngle >= -112.5f && momentumAngle < -67.5f -> "UP"
-                                        else -> "UP-RIGHT"
-                                    }
-                                    val releasePosition = spriteData.spriteState.position
-                                    val totalDragDistance = kotlin.math.sqrt(
-                                        cumulativeDragAmount.x * cumulativeDragAmount.x + 
-                                        cumulativeDragAmount.y * cumulativeDragAmount.y
-                                    )
-                                    Log.d("DragGesture", "Sprite RELEASED - Type: ${spriteData.spriteType}, Position: (${releasePosition.x.toInt()}, ${releasePosition.y.toInt()}), Total Drag Distance: ${totalDragDistance.toInt()}px, Momentum: ${momentumMagnitude.toInt()} px/frame, Velocity: (${cappedVelocity.x.toInt()}, ${cappedVelocity.y.toInt()}), Direction: ${momentumAngle.toInt()}° ($momentumDirection)")
-                                }
-                                
-                                // Clear dragging state (both global and local)
-                                setCurrentlyDraggedSprite(null)
-                                localDraggedSpriteState = null
-                                lastDragPosition = null
-                                lastDragTime = 0L
-                                recentDragMovements = emptyList()
-                                dragStartPosition = null
-                                cumulativeDragAmount = Offset.Zero
-                            } else {
-                                if (ENABLE_DRAG_LOGS) {
-                                    Log.d("DragGesture", "onDragEnd SKIPPED - Type: ${spriteData.spriteType}, State mismatch - currentlyDraggedSprite != spriteState")
-                                }
-                            }
-                        },
-                        onDragCancel = {
-                            if (ENABLE_DRAG_LOGS) {
-                                Log.d("DragGesture", "onDragCancel CALLED - Type: ${spriteData.spriteType}, currentlyDraggedSprite == spriteState: ${currentlyDraggedSprite == spriteData.spriteState}, localDraggedSpriteState == spriteState: ${localDraggedSpriteState == spriteData.spriteState}")
-                            }
-                            // Clear dragging state on cancel as well (check local state first)
-                            val wasDragged = localDraggedSpriteState == spriteData.spriteState || currentlyDraggedSprite == spriteData.spriteState
-                            if (wasDragged) {
-                                if (ENABLE_DRAG_LOGS) {
-                                    Log.d("DragGesture", "Sprite DRAG CANCELLED - Type: ${spriteData.spriteType}, Position: (${spriteData.spriteState.position.x.toInt()}, ${spriteData.spriteState.position.y.toInt()})")
-                                }
-                                setCurrentlyDraggedSprite(null)
-                                localDraggedSpriteState = null
-                                lastDragPosition = null
-                                lastDragTime = 0L
-                                recentDragMovements = emptyList()
-                                dragStartPosition = null
-                                cumulativeDragAmount = Offset.Zero
-                            }
-                        }
-                    )
-                }
-        )
     }
+    
+    return defenseType
+}
+
+// Get punch animation frames based on hand and punch type
+fun getPunchFrames(handSide: HandSide, punchType: PunchType): List<Int> {
+    return when (handSide) {
+        HandSide.LEFT -> when (punchType) {
+            PunchType.JAB -> SATOSHI_LEFT_JAB_FRAMES
+            PunchType.BODY -> SATOSHI_LEFT_BODY_FRAMES
+            PunchType.HOOK -> SATOSHI_LEFT_HOOK_FRAMES
+            PunchType.CROSS -> SATOSHI_LEFT_CROSS_FRAMES
+            PunchType.UPPERCUT -> SATOSHI_LEFT_UPPERCUT_FRAMES
+        }
+        HandSide.RIGHT -> when (punchType) {
+            PunchType.JAB -> SATOSHI_RIGHT_JAB_FRAMES
+            PunchType.BODY -> SATOSHI_RIGHT_BODY_FRAMES
+            PunchType.HOOK -> SATOSHI_RIGHT_HOOK_FRAMES
+            PunchType.CROSS -> SATOSHI_RIGHT_CROSS_FRAMES
+            PunchType.UPPERCUT -> SATOSHI_RIGHT_UPPERCUT_FRAMES
+        }
+    }
+}
+
+// Get Lizard punch animation frames (uses SELL volume)
+fun getLizardPunchFrames(handSide: HandSide, punchType: PunchType): List<Int> {
+    return when (handSide) {
+        HandSide.LEFT -> when (punchType) {
+            PunchType.JAB -> LIZARD_LEFT_JAB_FRAMES
+            PunchType.BODY -> LIZARD_LEFT_BODY_FRAMES
+            PunchType.HOOK -> LIZARD_LEFT_HOOK_FRAMES
+            PunchType.CROSS -> LIZARD_LEFT_CROSS_FRAMES
+            PunchType.UPPERCUT -> LIZARD_LEFT_UPPERCUT_FRAMES
+        }
+        HandSide.RIGHT -> when (punchType) {
+            PunchType.JAB -> LIZARD_RIGHT_JAB_FRAMES
+            PunchType.BODY -> LIZARD_RIGHT_BODY_FRAMES
+            PunchType.HOOK -> LIZARD_RIGHT_HOOK_FRAMES
+            PunchType.CROSS -> LIZARD_RIGHT_CROSS_FRAMES
+            PunchType.UPPERCUT -> LIZARD_RIGHT_UPPERCUT_FRAMES
+        }
+    }
+}
+
+// Get Lizard defense animation frames
+fun getLizardDefenseFrames(defenseType: DefenseType): List<Int> = when (defenseType) {
+    DefenseType.HEAD_BLOCK -> LIZARD_HEAD_BLOCK_FRAMES
+    DefenseType.BODY_BLOCK -> LIZARD_BODY_BLOCK_FRAMES
+    DefenseType.DODGE_LEFT -> LIZARD_DODGE_LEFT_FRAMES
+    DefenseType.DODGE_RIGHT -> LIZARD_DODGE_RIGHT_FRAMES
 }
