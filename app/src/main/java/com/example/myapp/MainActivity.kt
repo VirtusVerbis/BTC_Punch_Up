@@ -35,6 +35,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
@@ -135,8 +136,13 @@ const val FLASH_MAX_SPAWN_TOGETHER = 2
 const val FLASH_AUDIENCE_DISPLAY_MS = 150L
 const val FLASH_SPAWN_WAVE_DELAY_MS = 550L
 const val FLASH_AUDIENCE_MIN_INTERVAL_MS = 334L  // keep at or above 334L anything below risk of seizure inducing.  Min ms between audience flash starts (3/sec max; photosafety)
-// bg2 memes: placeholder (details later)
-private val BG2_MEMES_FRAMES = emptyList<Int>()
+// bg2 memes: Dancing Chika Brrr (DCB_) and future sequences; each sequence has its own constants
+const val DCB_MIN_FRAME_INTERVAL_MS = 80L   // photosafety: min ms between frame changes for this sequence
+const val DCB_FRAME_DELAY_MS = 250L // 100L        // ms per frame; use max(DCB_FRAME_DELAY_MS, DCB_MIN_FRAME_INTERVAL_MS) at runtime
+const val DCB_TOP_OFFSET_FRACTION = 0.17f  // fraction of screen height from top (below UI labels / damage bar)
+const val DCB_PRICE_INCREASE_PERCENT = 1.0f // trigger: BTC price +this % on any exchange starts Dancing Chika Brrr
+private const val DCB_SEQUENCE_ID = "Dancing_Chika_Brrr"
+private const val DCB_FRAME_COUNT = 40
 // bg4 signs: buy_btc_sign (5 frames, 0->1->2->3->4->Kill); spawn 1-3 per wave; cleared when ring frame changes
 private val BUY_BTC_SIGN_FRAMES = listOf(
     R.drawable.buy_btc_sign_0, R.drawable.buy_btc_sign_1, R.drawable.buy_btc_sign_2, R.drawable.buy_btc_sign_3, R.drawable.buy_btc_sign_4
@@ -630,6 +636,12 @@ data class FlashSpawn(
     val frameIndex: Int
 )
 
+// bg2 memes: one active sequence at a time; sequenceId e.g. "Dancing_Chika_Brrr", frameIndex 0..N-1 then kill
+data class MemeSpawn(
+    val sequenceId: String,
+    val frameIndex: Int
+)
+
 // Pending impact check: run hit detection once at 2nd-last frame of punch
 data class ImpactCheckData(
     val punchType: PunchType,
@@ -911,6 +923,7 @@ fun PriceDisplayScreen(
     var flashSpawns by remember { mutableStateOf<List<FlashSpawn>>(emptyList()) }
     var audienceFlashUntilMs by remember { mutableStateOf(0L) }
     var lastAudienceFlashStartMs by remember { mutableStateOf(0L) }
+    var activeMemeSpawn by remember { mutableStateOf<MemeSpawn?>(null) }
 
     // BG2 chart: show once every BG2_SHOW_INTERVAL_MS for BG2_VISIBLE_DURATION_MS
     LaunchedEffect(Unit) {
@@ -2415,6 +2428,12 @@ fun PriceDisplayScreen(
     // Track screen size for spawning
     var screenSizeForSpawn by remember { mutableStateOf(Size.Zero) }
     val density = LocalDensity.current.density
+    val context = LocalContext.current
+    val dcbFrames = remember(context) {
+        (1..DCB_FRAME_COUNT).map {
+            context.resources.getIdentifier("dancing_chika_brr_%03d".format(it), "drawable", context.packageName)
+        }.filter { it != 0 }
+    }
 
     // bg4 signs: spawn a wave of 1, 2, or 3 signs at SIGN_SPAWN_INTERVAL_MS; at most one sign per Y row (paused when bg3 flash active)
     LaunchedEffect(SIGN_SPAWN_INTERVAL_MS, screenSizeForSpawn.width, screenSizeForSpawn.height, satoshiKOPhase, lizardKOPhase) {
@@ -2522,6 +2541,37 @@ fun PriceDisplayScreen(
                     audienceFlashUntilMs = now + FLASH_AUDIENCE_DISPLAY_MS
                 }
             }
+        }
+    }
+
+    // bg2 memes: trigger Dancing Chika Brrr when BTC price increases by DCB_PRICE_INCREASE_PERCENT on any exchange
+    LaunchedEffect(binancePrice, binancePreviousPrice, coinbasePrice, coinbasePreviousPrice, activeMemeSpawn) {
+        if (activeMemeSpawn != null) return@LaunchedEffect
+        val threshold = DCB_PRICE_INCREASE_PERCENT / 100f
+        val binanceUp = binancePreviousPrice != null && binancePrice != null && binancePreviousPrice!! > 0 &&
+            (binancePrice!! - binancePreviousPrice!!) / binancePreviousPrice!! >= threshold
+        val coinbaseUp = coinbasePreviousPrice != null && coinbasePrice != null && coinbasePreviousPrice!! > 0 &&
+            (coinbasePrice!! - coinbasePreviousPrice!!) / coinbasePreviousPrice!! >= threshold
+        if (binanceUp || coinbaseUp) activeMemeSpawn = MemeSpawn(sequenceId = DCB_SEQUENCE_ID, frameIndex = 0)
+    }
+
+    // bg2 memes: advance frame every DCB_FRAME_DELAY_MS (clamped to DCB_MIN_FRAME_INTERVAL_MS); kill after last frame
+    LaunchedEffect(activeMemeSpawn, bg2Visible) {
+        if (activeMemeSpawn == null || bg2Visible) return@LaunchedEffect
+        delay(maxOf(DCB_FRAME_DELAY_MS, DCB_MIN_FRAME_INTERVAL_MS))
+        val spawn = activeMemeSpawn ?: return@LaunchedEffect
+        val frameCount = when (spawn.sequenceId) {
+            DCB_SEQUENCE_ID -> DCB_FRAME_COUNT
+            else -> 0
+        }
+        if (frameCount == 0) {
+            activeMemeSpawn = null
+            return@LaunchedEffect
+        }
+        if (spawn.frameIndex + 1 >= frameCount) {
+            activeMemeSpawn = null
+        } else {
+            activeMemeSpawn = spawn.copy(frameIndex = spawn.frameIndex + 1)
         }
     }
 
@@ -2763,14 +2813,24 @@ fun PriceDisplayScreen(
                     )
                 }
             }
-            if (BG2_MEMES_FRAMES.isNotEmpty()) {
-                val idx = backgroundFrameIndices.getOrElse(1) { 0 }.coerceIn(0, BG2_MEMES_FRAMES.size - 1)
-                Image(
-                    painter = painterResource(BG2_MEMES_FRAMES[idx]),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
+            // bg2 memes: one active sequence at a time (e.g. Dancing Chika Brrr); scale to fit width, keep aspect ratio
+            activeMemeSpawn?.let { spawn ->
+                val frames = when (spawn.sequenceId) {
+                    DCB_SEQUENCE_ID -> dcbFrames
+                    else -> emptyList()
+                }
+                val drawableId = frames.getOrNull(spawn.frameIndex)
+                if (drawableId != null && drawableId != 0) {
+                    Image(
+                        painter = painterResource(drawableId),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .offset { IntOffset(0, (screenSizeForSpawn.height * DCB_TOP_OFFSET_FRACTION).toInt()) }
+                            .fillMaxWidth()
+                            .height((screenSizeForSpawn.width * 176f / 320f / density).dp),
+                        contentScale = ContentScale.Fit
+                    )
+                }
             }
             if (RING_FRAMES.isNotEmpty()) {
                 val idx = backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, RING_FRAMES.size - 1)
