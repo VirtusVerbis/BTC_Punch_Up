@@ -88,12 +88,12 @@ const val SATOSHI_Y_POSITION = 0.70f // 0.65f
 
 // Satoshi X position factor (adjustable for testing)
 // 0.0 = left edge, 0.5 = center, 1.0 = right edge
-const val SATOSHI_X_POSITION = 0.6f //0.525f
+const val SATOSHI_X_POSITION = 0.80f //0.6f //0.525f
 
 // Lizard (villain) sprite constants
 const val LIZARD_SCALE = 5f
-const val LIZARD_Y_POSITION = 0.64f  // 0.57f
-const val LIZARD_X_POSITION =  0.9f //0.765f
+const val LIZARD_Y_POSITION = 0.66f //0.64f  // 0.57f
+const val LIZARD_X_POSITION =  0.95f // 0.9f //0.765f
 
 // Ring rotation (bg0): test mode and direction
 const val TEST_RING_ROTATION = true  // true = use timer; false = trigger on Bitcoin block height update
@@ -146,14 +146,17 @@ private val RING_FRAMES = listOf(
 // Bobbing movement (boxers move left/right gradually, in opposite directions)
 const val BOBBING_MAX_X_LEFT = -20f   // Max pixels left of center
 const val BOBBING_MAX_X_RIGHT = 20f   // Max pixels right of center
-const val BOBBING_MAX_Y_UP = -10f     // Max pixels up from center
-const val BOBBING_MAX_Y_DOWN = 10f    // Max pixels down from center
-const val BOBBING_STEP_PX = 0.5f      // Pixels per tick
+const val BOBBING_MAX_Y_UP = -20f     // Max pixels up from center
+const val BOBBING_MAX_Y_DOWN = 20f    // Max pixels down from center
+const val BOBBING_STEP_PX = 1f // 0.5f      // Pixels per tick
 const val BOBBING_INTERVAL_MS = 40L   // ms between updates
+const val BOBBING_Y_STEPS_PER_FULL_X_CYCLE = 1  // Y increments applied per full Left-Right or Right-Left cycle
 
-// Depth scale (boxers appear smaller when up, larger when down)
-const val SCALE_SMALLER_PERCENT = 10f  // Scale down % when at max Y up
-const val SCALE_LARGER_PERCENT = 10f   // Scale up % when at max Y down
+// Depth scale (boxers appear smaller when up, larger when down) – per sprite for tuning
+const val SCALE_SMALLER_PERCENT_SATOSHI = 12f //30f
+const val SCALE_LARGER_PERCENT_SATOSHI = 60f //40f // 30f
+const val SCALE_SMALLER_PERCENT_LIZARD = 20f //20f
+const val SCALE_LARGER_PERCENT_LIZARD = 30f //24f //20f
 
 // Spread-based defense mode constants
 // Rolling window length for median spread calculation (seconds); default 60L
@@ -1297,12 +1300,14 @@ fun PriceDisplayScreen(
     // Y bobbing (both move up/down together - simulates engaging/disengaging)
     var movementOffsetY by remember { mutableStateOf(0f) }
     var movementDirectionY by remember { mutableStateOf(1) }  // 1 = down, -1 = up
+    var applyYOnNextCentreCross by remember { mutableStateOf(false) }  // flip on each centre cross; apply Y when false after flip (every second cross)
     
     LaunchedEffect(satoshiInDamage, lizardInDamage, satoshiKOPhase, lizardKOPhase) {
         while (true) {
             delay(BOBBING_INTERVAL_MS)
             // Pause bobbing when either boxer is in damage or KO sequence
             if (satoshiInDamage || lizardInDamage || satoshiKOPhase != null || lizardKOPhase != null) continue
+            val oldOffsetX = movementOffsetX
             movementOffsetX += movementDirection * BOBBING_STEP_PX
             when {
                 movementOffsetX >= BOBBING_MAX_X_RIGHT -> {
@@ -1314,15 +1319,23 @@ fun PriceDisplayScreen(
                     movementDirection = 1
                 }
             }
-            movementOffsetY += movementDirectionY * BOBBING_STEP_PX
-            when {
-                movementOffsetY >= BOBBING_MAX_Y_DOWN -> {
-                    movementOffsetY = BOBBING_MAX_Y_DOWN
-                    movementDirectionY = -1
-                }
-                movementOffsetY <= BOBBING_MAX_Y_UP -> {
-                    movementOffsetY = BOBBING_MAX_Y_UP
-                    movementDirectionY = 1
+            val centreCrossed = (oldOffsetX > 0 && movementOffsetX < 0) || (oldOffsetX < 0 && movementOffsetX > 0)
+            if (centreCrossed) {
+                applyYOnNextCentreCross = !applyYOnNextCentreCross
+                if (!applyYOnNextCentreCross) {
+                    repeat(BOBBING_Y_STEPS_PER_FULL_X_CYCLE) {
+                        movementOffsetY += movementDirectionY * BOBBING_STEP_PX
+                        when {
+                            movementOffsetY >= BOBBING_MAX_Y_DOWN -> {
+                                movementOffsetY = BOBBING_MAX_Y_DOWN
+                                movementDirectionY = -1
+                            }
+                            movementOffsetY <= BOBBING_MAX_Y_UP -> {
+                                movementOffsetY = BOBBING_MAX_Y_UP
+                                movementDirectionY = 1
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2649,8 +2662,6 @@ fun PriceDisplayScreen(
         // Render sprites in layer order (1=Lizard, 2=Satoshi, 3=Cat)
         val rangeY = BOBBING_MAX_Y_DOWN - BOBBING_MAX_Y_UP
         val tY = if (rangeY != 0f) (movementOffsetY - BOBBING_MAX_Y_UP) / rangeY else 0.5f
-        val depthScaleMultiplier = (1f - SCALE_SMALLER_PERCENT / 100f) +
-            tY * ((1f + SCALE_LARGER_PERCENT / 100f) - (1f - SCALE_SMALLER_PERCENT / 100f))
         sprites.sortedBy { it.layer }.forEach { spriteData ->
             key(spriteData.spriteType) {
             val xBobbingOffset = when (spriteData.spriteType) {
@@ -2660,7 +2671,13 @@ fun PriceDisplayScreen(
                 else -> 0f
             }
             val yBobbingOffsetCat = if (spriteData.spriteType == SpriteType.CAT) 0f else movementOffsetY
-            val depthForSprite = if (spriteData.spriteType == SpriteType.CAT) 1f else depthScaleMultiplier
+            val depthForSprite = when (spriteData.spriteType) {
+                SpriteType.SATOSHI -> (1f - SCALE_SMALLER_PERCENT_SATOSHI / 100f) +
+                    tY * ((1f + SCALE_LARGER_PERCENT_SATOSHI / 100f) - (1f - SCALE_SMALLER_PERCENT_SATOSHI / 100f))
+                SpriteType.LIZARD -> (1f - SCALE_SMALLER_PERCENT_LIZARD / 100f) +
+                    tY * ((1f + SCALE_LARGER_PERCENT_LIZARD / 100f) - (1f - SCALE_SMALLER_PERCENT_LIZARD / 100f))
+                else -> 1f
+            }
             Sprite(
                 spriteData = spriteData,
                 xBobbingOffset = xBobbingOffset,
