@@ -99,7 +99,7 @@ const val LIZARD_X_POSITION =  0.95f // 0.9f //0.765f
 const val TEST_RING_ROTATION = true  // true = use timer; false = trigger on Bitcoin block height update
 enum class RingRotateDirection { Left, Right, Random }
 val RING_ROTATE_DIRECTION = RingRotateDirection.Random  // Left, Right, or Random (default)
-const val RING_ROTATE_FREQUENCY_MS =  2*60*1_000L  // When TEST_RING_ROTATION: rotate every N ms (e.g. 10 seconds)
+const val RING_ROTATE_FREQUENCY_MS =   2*60*1_000L  // When TEST_RING_ROTATION: rotate every N ms (e.g. 10 seconds)
 const val RING_ROTATION_FRAME_DELAY_MS = 8000L //80L  // ms per ring rotation frame; lower = faster, higher = slower
 
 // Cat walk across screen (fg3, in front of Satoshi)
@@ -112,9 +112,9 @@ const val CAT_OFFSCREEN_MARGIN_PX = 50f  // Extra pixels beyond screen edge for 
 private val E_CAT_LEFT_FRAMES = listOf(R.drawable.e_cat_left_1, R.drawable.e_cat_left_2)   // walks right-to-left
 private val E_CAT_RIGHT_FRAMES = listOf(R.drawable.e_cat_right_1, R.drawable.e_cat_right_2) // walks left-to-right
 
-// Background layers (farthest to closest): bg3, bg2, bg1 (chart), bg0 (ring)
-const val AUDIENCE_FRAME_DELAY_MS = 4000L  //8000L  // 1 second per frame (bg3 audience)
-// bg3 audience: 8 sets of 3 frames, synced to ring; set = ring frame index (0-7), frame in set = 0->1->2->0
+// Background layers (farthest to closest): bg5 (audience), bg4 (signs), bg3 (flash), bg2 (memes), bg1 (chart), bg0 (ring)
+const val AUDIENCE_FRAME_DELAY_MS = 4000L  // 1 second per frame (bg5 audience)
+// bg5 audience: 8 sets of 3 frames, synced to ring; set = ring frame index (0-7), frame in set = 0->1->2->0
 private val AUDIENCE_FRAMES_BY_RING: List<List<Int>> = listOf(
     listOf(R.drawable.audience_0_r0, R.drawable.audience_1_r0, R.drawable.audience_2_r0),
     listOf(R.drawable.audience_0_r1, R.drawable.audience_1_r1, R.drawable.audience_2_r1),
@@ -125,8 +125,19 @@ private val AUDIENCE_FRAMES_BY_RING: List<List<Int>> = listOf(
     listOf(R.drawable.audience_0_r6, R.drawable.audience_1_r6, R.drawable.audience_2_r6),
     listOf(R.drawable.audience_0_r7, R.drawable.audience_1_r7, R.drawable.audience_2_r7)
 )
-private val BACKGROUND_LAYER_2_FRAMES = emptyList<Int>()
-// bg2 signs: buy_btc_sign (5 frames, 0->1->2->3->4->Kill); spawn 1-3 per wave; cleared when ring frame changes
+// bg3 flash: flash_0..flash_3 (64x64), flash_audience_0 (full screen)
+private val BG3_FLASH_FRAMES = listOf(R.drawable.flash_0, R.drawable.flash_1, R.drawable.flash_2, R.drawable.flash_3)
+private val FLASH_AUDIENCE_DRAWABLE = R.drawable.flash_audience_0
+const val FLASH_FRAME_DELAY_MS = 80L
+const val FLASH_MAX_Y_FRACTION = 0.6f
+const val FLASH_SPAWN_COUNT_DEFAULT = 20
+const val FLASH_MAX_SPAWN_TOGETHER = 2
+const val FLASH_AUDIENCE_DISPLAY_MS = 150L
+const val FLASH_SPAWN_WAVE_DELAY_MS = 550L
+const val FLASH_AUDIENCE_MIN_INTERVAL_MS = 334L  // keep at or above 334L anything below risk of seizure inducing.  Min ms between audience flash starts (3/sec max; photosafety)
+// bg2 memes: placeholder (details later)
+private val BG2_MEMES_FRAMES = emptyList<Int>()
+// bg4 signs: buy_btc_sign (5 frames, 0->1->2->3->4->Kill); spawn 1-3 per wave; cleared when ring frame changes
 private val BUY_BTC_SIGN_FRAMES = listOf(
     R.drawable.buy_btc_sign_0, R.drawable.buy_btc_sign_1, R.drawable.buy_btc_sign_2, R.drawable.buy_btc_sign_3, R.drawable.buy_btc_sign_4
 )
@@ -602,13 +613,21 @@ enum class DamageAnimationType {
     CENTER_DAMAGE_UPPERCUT
 }
 
-// bg2 signs: one spawn instance (0->1->2->Kill); rowIndex 0..2 = which Y row
+// bg4 signs: one spawn instance (0->1->2->Kill); rowIndex 0..2 = which Y row
 data class BtcSignSpawn(
     val id: Long,
     val xPx: Float,
     val yPx: Float,
     val frameIndex: Int,
     val rowIndex: Int
+)
+
+// bg3 flash: one spawn (0->1->2->3->Kill); 64x64 px at (xPx, yPx)
+data class FlashSpawn(
+    val id: Long,
+    val xPx: Float,
+    val yPx: Float,
+    val frameIndex: Int
 )
 
 // Pending impact check: run hit detection once at 2nd-last frame of punch
@@ -889,6 +908,9 @@ fun PriceDisplayScreen(
     var catDirectionLeft by remember { mutableStateOf<Boolean?>(null) }  // true = walking left, false = right; null = no cat
     var signSpawns by remember { mutableStateOf<List<BtcSignSpawn>>(emptyList()) }
     var lastRingFrameIndex by remember { mutableStateOf(0) }
+    var flashSpawns by remember { mutableStateOf<List<FlashSpawn>>(emptyList()) }
+    var audienceFlashUntilMs by remember { mutableStateOf(0L) }
+    var lastAudienceFlashStartMs by remember { mutableStateOf(0L) }
 
     // BG2 chart: show once every BG2_SHOW_INTERVAL_MS for BG2_VISIBLE_DURATION_MS
     LaunchedEffect(Unit) {
@@ -1263,7 +1285,7 @@ fun PriceDisplayScreen(
         }
     }
 
-    // Audience (bg3): loop frames 0 -> 1 -> 2 -> 0 within current ring set at AUDIENCE_FRAME_DELAY_MS
+    // Audience (bg5): loop frames 0 -> 1 -> 2 -> 0 within current ring set at AUDIENCE_FRAME_DELAY_MS
     LaunchedEffect(AUDIENCE_FRAMES_BY_RING.isNotEmpty()) {
         if (AUDIENCE_FRAMES_BY_RING.isEmpty()) return@LaunchedEffect
         while (true) {
@@ -1277,7 +1299,7 @@ fun PriceDisplayScreen(
         }
     }
 
-    // bg2 signs: clear all when ring frame index changes
+    // bg4 signs: clear all when ring frame index changes
     LaunchedEffect(backgroundFrameIndices) {
         val ring = backgroundFrameIndices.getOrElse(0) { 0 }
         if (ring != lastRingFrameIndex) {
@@ -2394,11 +2416,12 @@ fun PriceDisplayScreen(
     var screenSizeForSpawn by remember { mutableStateOf(Size.Zero) }
     val density = LocalDensity.current.density
 
-    // bg2 signs: spawn a wave of 1, 2, or 3 signs at SIGN_SPAWN_INTERVAL_MS; at most one sign per Y row
-    LaunchedEffect(SIGN_SPAWN_INTERVAL_MS, screenSizeForSpawn.width, screenSizeForSpawn.height) {
+    // bg4 signs: spawn a wave of 1, 2, or 3 signs at SIGN_SPAWN_INTERVAL_MS; at most one sign per Y row (paused when bg3 flash active)
+    LaunchedEffect(SIGN_SPAWN_INTERVAL_MS, screenSizeForSpawn.width, screenSizeForSpawn.height, satoshiKOPhase, lizardKOPhase) {
         if (screenSizeForSpawn.width <= 0f || screenSizeForSpawn.height <= 0f) return@LaunchedEffect
         while (true) {
             delay(SIGN_SPAWN_INTERVAL_MS)
+            if (satoshiKOPhase == KOPhase.KNOCKED_DOWN || lizardKOPhase == KOPhase.KNOCKED_DOWN) continue
             val w = screenSizeForSpawn.width
             val h = screenSizeForSpawn.height
             val marginPx = (SIGN_MARGIN_X_FRACTION * w).toFloat()
@@ -2421,13 +2444,84 @@ fun PriceDisplayScreen(
         }
     }
 
-    // bg2 signs: advance frames 0->1->2->Kill every SIGN_FRAME_DELAY_MS
-    LaunchedEffect(Unit) {
+    // bg4 signs: advance frames 0->1->2->Kill every SIGN_FRAME_DELAY_MS (paused when bg3 flash active)
+    LaunchedEffect(satoshiKOPhase, lizardKOPhase) {
         while (true) {
             delay(SIGN_FRAME_DELAY_MS)
+            if (satoshiKOPhase == KOPhase.KNOCKED_DOWN || lizardKOPhase == KOPhase.KNOCKED_DOWN) continue
             signSpawns = signSpawns
                 .map { it.copy(frameIndex = it.frameIndex + 1) }
                 .filter { it.frameIndex < BUY_BTC_SIGN_FRAMES.size }
+        }
+    }
+
+    val flashActive = satoshiKOPhase == KOPhase.KNOCKED_DOWN || lizardKOPhase == KOPhase.KNOCKED_DOWN
+    val flashSizePx = 64f
+
+    // bg3 flash: spawn FLASH_SPAWN_COUNT_DEFAULT in waves of 1..FLASH_MAX_SPAWN_TOGETHER when knockdown (no overlap, top half)
+    LaunchedEffect(flashActive, screenSizeForSpawn.width, screenSizeForSpawn.height) {
+        if (!flashActive || BG3_FLASH_FRAMES.size < 4) return@LaunchedEffect
+        val w = screenSizeForSpawn.width
+        val h = screenSizeForSpawn.height
+        if (w <= 0f || h <= 0f) return@LaunchedEffect
+        flashSpawns = emptyList()
+        var spawned = 0
+        val maxY = h * FLASH_MAX_Y_FRACTION
+        val half = flashSizePx / 2f
+        val minX = half
+        val maxX = w - half
+        val minY = half
+        val maxYPos = (maxY - half).coerceAtLeast(half)
+        while (spawned < FLASH_SPAWN_COUNT_DEFAULT) {
+            val count = (1..FLASH_MAX_SPAWN_TOGETHER).random().coerceAtMost(FLASH_SPAWN_COUNT_DEFAULT - spawned)
+            val existing = flashSpawns.toMutableList()
+            val newOnes = mutableListOf<FlashSpawn>()
+            repeat(count) {
+                var tries = 20
+                while (tries > 0) {
+                    val xPx = minX + (maxX - minX) * kotlin.random.Random.nextFloat()
+                    val yPx = minY + (maxYPos - minY) * kotlin.random.Random.nextFloat()
+                    val overlaps = (existing + newOnes).any { ex ->
+                        kotlin.math.abs(xPx - ex.xPx) < flashSizePx && kotlin.math.abs(yPx - ex.yPx) < flashSizePx
+                    }
+                    if (!overlaps) {
+                        val spawn = FlashSpawn(id = System.nanoTime() + it, xPx = xPx, yPx = yPx, frameIndex = 0)
+                        newOnes.add(spawn)
+                        existing.add(spawn)
+                        break
+                    }
+                    tries--
+                }
+            }
+            if (newOnes.isNotEmpty()) {
+                flashSpawns = flashSpawns + newOnes
+                spawned += newOnes.size
+            }
+            delay(FLASH_SPAWN_WAVE_DELAY_MS)
+        }
+    }
+
+    // bg3 flash: advance frames 0->1->2->3->Kill; on kill show full-screen audience flash for FLASH_AUDIENCE_DISPLAY_MS
+    LaunchedEffect(flashActive) {
+        if (!flashActive || BG3_FLASH_FRAMES.size < 4) return@LaunchedEffect
+        while (true) {
+            delay(FLASH_FRAME_DELAY_MS)
+            if (!flashActive) return@LaunchedEffect
+            val now = System.currentTimeMillis()
+            val next = flashSpawns
+                .map { s ->
+                    if (s.frameIndex + 1 >= BG3_FLASH_FRAMES.size) null else s.copy(frameIndex = s.frameIndex + 1)
+                }
+                .filterNotNull()
+            val killed = flashSpawns.filter { it.frameIndex + 1 >= BG3_FLASH_FRAMES.size }
+            flashSpawns = next
+            if (killed.isNotEmpty()) {
+                val canFlash = lastAudienceFlashStartMs == 0L || (now - lastAudienceFlashStartMs) >= FLASH_AUDIENCE_MIN_INTERVAL_MS
+                if (canFlash) {
+                    lastAudienceFlashStartMs = now
+                    audienceFlashUntilMs = now + FLASH_AUDIENCE_DISPLAY_MS
+                }
+            }
         }
     }
 
@@ -2582,7 +2676,7 @@ fun PriceDisplayScreen(
                 // #endregion
             }
     ) {
-        // Background: when chart visible draw bg1 (chart) + bg0 (ring); else draw bg3, bg2, bg0 (ring)
+        // Background: when chart visible draw bg1 (chart) + bg0 (ring); else draw bg5, bg4, bg3, bg2, bg0 (ring)
         if (bg2Visible) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Spacer(modifier = Modifier.fillMaxHeight(BG2_CHART_TOP_OFFSET_FRACTION))
@@ -2620,7 +2714,7 @@ fun PriceDisplayScreen(
                     )
                 }
             }
-            // bg2 signs: draw each spawn (0->1->2->Kill)
+            // bg4 signs: draw each spawn (0->1->2->Kill)
             val signSizePx = (SIGN_SIZE_DP * density).toFloat()
             signSpawns.forEach { sign ->
                 key(sign.id) {
@@ -2639,10 +2733,40 @@ fun PriceDisplayScreen(
                     )
                 }
             }
-            if (BACKGROUND_LAYER_2_FRAMES.isNotEmpty()) {
-                val idx = backgroundFrameIndices.getOrElse(1) { 0 }.coerceIn(0, BACKGROUND_LAYER_2_FRAMES.size - 1)
+            // bg3 flash: draw spawns and full-screen audience flash when active (knockdown)
+            val flashActiveDraw = satoshiKOPhase == KOPhase.KNOCKED_DOWN || lizardKOPhase == KOPhase.KNOCKED_DOWN
+            if (flashActiveDraw && BG3_FLASH_FRAMES.size >= 4) {
+                val flashHalfPx = 32f
+                flashSpawns.forEach { spawn ->
+                    key(spawn.id) {
+                        val drawableId = BG3_FLASH_FRAMES.getOrNull(spawn.frameIndex) ?: return@forEach
+                        Image(
+                            painter = painterResource(drawableId),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .offset {
+                                    IntOffset(
+                                        (spawn.xPx - flashHalfPx).toInt(),
+                                        (spawn.yPx - flashHalfPx).toInt()
+                                    )
+                                }
+                                .size(64.dp)
+                        )
+                    }
+                }
+                if (System.currentTimeMillis() < audienceFlashUntilMs) {
+                    Image(
+                        painter = painterResource(FLASH_AUDIENCE_DRAWABLE),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+            }
+            if (BG2_MEMES_FRAMES.isNotEmpty()) {
+                val idx = backgroundFrameIndices.getOrElse(1) { 0 }.coerceIn(0, BG2_MEMES_FRAMES.size - 1)
                 Image(
-                    painter = painterResource(BACKGROUND_LAYER_2_FRAMES[idx]),
+                    painter = painterResource(BG2_MEMES_FRAMES[idx]),
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
