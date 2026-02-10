@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -89,12 +91,12 @@ const val SATOSHI_Y_POSITION = 0.70f // 0.65f
 
 // Satoshi X position factor (adjustable for testing)
 // 0.0 = left edge, 0.5 = center, 1.0 = right edge
-const val SATOSHI_X_POSITION = 0.80f //0.6f //0.525f
+const val SATOSHI_X_POSITION = 0.60f //0.6f //0.525f
 
 // Lizard (villain) sprite constants
 const val LIZARD_SCALE = 5f
 const val LIZARD_Y_POSITION = 0.66f //0.64f  // 0.57f
-const val LIZARD_X_POSITION =  0.95f // 0.9f //0.765f
+const val LIZARD_X_POSITION =  0.90f // 0.9f //0.765f
 
 // Ring rotation (bg0): test mode and direction
 const val TEST_RING_ROTATION = true  // true = use timer; false = trigger on Bitcoin block height update
@@ -186,19 +188,23 @@ private val RING_FRAMES = listOf(
 )
 
 // Bobbing movement (boxers move left/right gradually, in opposite directions)
-const val BOBBING_MAX_X_LEFT = -20f   // Max pixels left of center
-const val BOBBING_MAX_X_RIGHT = 20f   // Max pixels right of center
-const val BOBBING_MAX_Y_UP = -20f     // Max pixels up from center
-const val BOBBING_MAX_Y_DOWN = 20f    // Max pixels down from center
+const val BOBBING_MAX_X_LEFT = -20f//-20f   // Max pixels left of center
+const val BOBBING_MAX_X_RIGHT = 20f//20f   // Max pixels right of center
+const val BOBBING_MAX_Y_UP = -15f     // Max pixels up from center
+const val BOBBING_MAX_Y_DOWN = 15f    // Max pixels down from center
 const val BOBBING_STEP_PX = 1f // 0.5f      // Pixels per tick
 const val BOBBING_INTERVAL_MS = 40L   // ms between updates
-const val BOBBING_Y_STEPS_PER_FULL_X_CYCLE = 1  // Y increments applied per full Left-Right or Right-Left cycle
+const val BOBBING_Y_STEPS_PER_FULL_X_CYCLE = 3  // Y increments applied per full Left-Right or Right-Left cycle
+const val BOBBING_TOGETHER_MAX_X_LEFT = -200f// -100f   // Max pixels the pair moves left (both boxers together)
+const val BOBBING_TOGETHER_MAX_X_RIGHT = 200f // 100f    // Max pixels the pair moves right (both boxers together)
+const val BOBBING_TOGETHER_STEP_PX = 5f         // Pixels per tick for together movement (independent of BOBBING_STEP_PX)
 
 // Depth scale (boxers appear smaller when up, larger when down) – per sprite for tuning
-const val SCALE_SMALLER_PERCENT_SATOSHI = 12f //30f
-const val SCALE_LARGER_PERCENT_SATOSHI = 60f //40f // 30f
-const val SCALE_SMALLER_PERCENT_LIZARD = 20f //20f
-const val SCALE_LARGER_PERCENT_LIZARD = 30f //24f //20f
+// bigger value = do more of it
+const val SCALE_SMALLER_PERCENT_SATOSHI = 5f //12f //30f
+const val SCALE_LARGER_PERCENT_SATOSHI = 20f //60f //40f // 30f
+const val SCALE_SMALLER_PERCENT_LIZARD = 5f //20f //20f
+const val SCALE_LARGER_PERCENT_LIZARD = 20f //30f //24f //20f
 
 // Spread-based defense mode constants
 // Rolling window length for median spread calculation (seconds); default 60L
@@ -1361,7 +1367,10 @@ fun PriceDisplayScreen(
     var movementOffsetY by remember { mutableStateOf(0f) }
     var movementDirectionY by remember { mutableStateOf(1) }  // 1 = down, -1 = up
     var applyYOnNextCentreCross by remember { mutableStateOf(false) }  // flip on each centre cross; apply Y when false after flip (every second cross)
-    
+    // Together movement (both boxers move left/right as a pair)
+    var togetherOffsetX by remember { mutableStateOf(0f) }
+    var togetherDirection by remember { mutableStateOf(1) }  // 1 = right, -1 = left
+
     LaunchedEffect(satoshiInDamage, lizardInDamage, satoshiKOPhase, lizardKOPhase) {
         while (true) {
             delay(BOBBING_INTERVAL_MS)
@@ -1379,7 +1388,9 @@ fun PriceDisplayScreen(
                     movementDirection = 1
                 }
             }
-            val centreCrossed = (oldOffsetX > 0 && movementOffsetX < 0) || (oldOffsetX < 0 && movementOffsetX > 0)
+            val centreCrossed = (oldOffsetX > 0 && movementOffsetX <= 0) ||
+                (oldOffsetX < 0 && movementOffsetX >= 0) ||
+                (oldOffsetX == 0f && movementOffsetX != 0f)
             if (centreCrossed) {
                 applyYOnNextCentreCross = !applyYOnNextCentreCross
                 if (!applyYOnNextCentreCross) {
@@ -1396,6 +1407,18 @@ fun PriceDisplayScreen(
                             }
                         }
                     }
+                }
+            }
+            // Together movement: both boxers drift left then right (same step/interval as bobbing)
+            togetherOffsetX += togetherDirection * BOBBING_TOGETHER_STEP_PX
+            when {
+                togetherOffsetX >= BOBBING_TOGETHER_MAX_X_RIGHT -> {
+                    togetherOffsetX = BOBBING_TOGETHER_MAX_X_RIGHT
+                    togetherDirection = -1
+                }
+                togetherOffsetX <= BOBBING_TOGETHER_MAX_X_LEFT -> {
+                    togetherOffsetX = BOBBING_TOGETHER_MAX_X_LEFT
+                    togetherDirection = 1
                 }
             }
         }
@@ -2892,7 +2915,8 @@ fun PriceDisplayScreen(
                         painter = painterResource(FLASH_AUDIENCE_DRAWABLE),
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
+                        contentScale = ContentScale.Fit,
+                        alignment = Alignment.TopCenter
                     )
                 }
             }
@@ -2949,8 +2973,8 @@ fun PriceDisplayScreen(
         sprites.sortedBy { it.layer }.forEach { spriteData ->
             key(spriteData.spriteType) {
             val xBobbingOffset = when (spriteData.spriteType) {
-                SpriteType.SATOSHI -> movementOffsetX
-                SpriteType.LIZARD -> -movementOffsetX
+                SpriteType.SATOSHI -> movementOffsetX + togetherOffsetX
+                SpriteType.LIZARD -> -movementOffsetX + togetherOffsetX
                 SpriteType.CAT -> 0f
                 else -> 0f
             }
@@ -3107,8 +3131,8 @@ fun Sprite(
     onPlayOnceComplete: ((SpriteType) -> Unit)? = null
 ) {
     val spriteSize = spriteData.spriteSizeDp.dp
-    val visualSize = spriteSize * spriteData.sizeScale * depthScaleMultiplier
-    
+    val baseSizeDp = spriteSize * spriteData.sizeScale
+
     // Track current frame for animated sprites
     var currentFrameIndex by remember { mutableStateOf(spriteData.currentFrameIndex) }
     var currentResourceId by remember { mutableStateOf(spriteData.spriteResourceId) }
@@ -3214,8 +3238,8 @@ fun Sprite(
         contentDescription = contentDescription,
         modifier = Modifier
             .offset {
-                // position is sprite center; use layout Density so half-size matches .size(visualSize)
-                val halfPx = visualSize.toPx() / 2f
+                // position is sprite center; use base size so layout is fixed and scale is applied from center
+                val halfPx = baseSizeDp.toPx() / 2f
                 val leftPx = spriteData.spriteState.position.x + xBobbingOffset - halfPx
                 val topPx = spriteData.spriteState.position.y + yBobbingOffset - halfPx
                 // #region agent log
@@ -3223,7 +3247,12 @@ fun Sprite(
                 // #endregion
                 IntOffset(leftPx.toInt(), topPx.toInt())
             }
-            .size(visualSize)
+            .size(baseSizeDp)
+            .graphicsLayer {
+                scaleX = depthScaleMultiplier
+                scaleY = depthScaleMultiplier
+                transformOrigin = TransformOrigin.Center
+            }
     )
 }
 
