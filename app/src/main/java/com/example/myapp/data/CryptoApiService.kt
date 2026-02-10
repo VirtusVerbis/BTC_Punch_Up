@@ -12,7 +12,9 @@ interface CryptoApiService {
     suspend fun getBinanceKlines(
         @Query("symbol") symbol: String = "BTCUSDT",
         @Query("interval") interval: String = "1m",
-        @Query("limit") limit: Int = 60
+        @Query("limit") limit: Int = 60,
+        @Query("startTime") startTime: Long? = null,
+        @Query("endTime") endTime: Long? = null
     ): ResponseBody
 
     @GET("api/v3/trades")

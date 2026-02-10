@@ -2,6 +2,7 @@ package com.example.myapp
 
 import android.os.Bundle
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.Animatable
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,6 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.material3.Text
@@ -810,9 +813,11 @@ private fun agentLog(location: String, message: String, dataStr: String, hypothe
 
 class MainActivity : ComponentActivity() {
     private var webSocketRepository: WebSocketRepository? = null
-    
+    private var lastPausedAtMs: Long? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             MyAppTheme {
                 var showSplash by remember { mutableStateOf(true) }
@@ -836,12 +841,17 @@ class MainActivity : ComponentActivity() {
     
     override fun onPause() {
         super.onPause()
+        lastPausedAtMs = System.currentTimeMillis()
         webSocketRepository?.disconnect()
     }
-    
+
     override fun onResume() {
         super.onResume()
         webSocketRepository?.connect()
+        lastPausedAtMs?.let { ts ->
+            webSocketRepository?.backfillCandlesSince(ts)
+            lastPausedAtMs = null
+        }
     }
     
     override fun onDestroy() {
@@ -956,8 +966,24 @@ fun PriceDisplayScreen(
     var lastAudienceFlashStartMs by remember { mutableStateOf(0L) }
     var activeMemeSpawn by remember { mutableStateOf<MemeSpawn?>(null) }
 
+    // Lifecycle: only run periodic work when app is visible (saves battery when backgrounded)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var isVisible by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, e ->
+            when (e) {
+                Lifecycle.Event.ON_START -> isVisible = true
+                Lifecycle.Event.ON_STOP -> isVisible = false
+                else -> {}
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
     // BG2 chart: show once every BG2_SHOW_INTERVAL_MS for BG2_VISIBLE_DURATION_MS
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isVisible) {
+        if (!isVisible) return@LaunchedEffect
         while (true) {
             delay(BG2_SHOW_INTERVAL_MS)
             bg2Visible = true
@@ -1080,7 +1106,8 @@ fun PriceDisplayScreen(
     }
     
     // Elapsed timer: tick every second so HH:MM:SS recomputes; update overTenMin so flash effect is not cancelled every second
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isVisible) {
+        if (!isVisible) return@LaunchedEffect
         while (true) {
             delay(1000)
             tick++
@@ -1090,8 +1117,8 @@ fun PriceDisplayScreen(
     }
     
     // When elapsed >= 10 min, flash timer 3 times every 30 seconds (keyed on overTenMin so effect is not cancelled every tick)
-    LaunchedEffect(overTenMin, lastBlockHeightUpdateTimeMs) {
-        if (!overTenMin) {
+    LaunchedEffect(isVisible, overTenMin, lastBlockHeightUpdateTimeMs) {
+        if (!isVisible || !overTenMin) {
             timerOverTenMinFlashOn = false
             return@LaunchedEffect
         }
@@ -1112,8 +1139,8 @@ fun PriceDisplayScreen(
     }
     
     // Block height update flash: 10 times when value changes (non-null)
-    LaunchedEffect(blockHeight) {
-        if (blockHeight == null) return@LaunchedEffect
+    LaunchedEffect(isVisible, blockHeight) {
+        if (!isVisible || blockHeight == null) return@LaunchedEffect
         repeat(10) {
             blockHeightFlashOn = true
             delay(BLOCK_HEIGHT_FLASH_HALF_MS)
@@ -1260,7 +1287,8 @@ fun PriceDisplayScreen(
     var lizardKOCount by remember { mutableStateOf(0) }
 
     // Bitcoin block height: poll Mempool.space once per minute; reset elapsed timer only when value changes
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isVisible) {
+        if (!isVisible) return@LaunchedEffect
         while (true) {
             repository.getBlockTipHeight().onSuccess { newHeight ->
                 val valueChanged = (blockHeight != newHeight)
@@ -1278,8 +1306,8 @@ fun PriceDisplayScreen(
     }
 
     // Test mode: trigger ring rotation on a timer instead of block height
-    LaunchedEffect(TEST_RING_ROTATION) {
-        if (!TEST_RING_ROTATION) return@LaunchedEffect
+    LaunchedEffect(isVisible, TEST_RING_ROTATION) {
+        if (!isVisible || !TEST_RING_ROTATION) return@LaunchedEffect
         while (true) {
             delay(RING_ROTATE_FREQUENCY_MS)
             val noKo = satoshiKOPhase == null && lizardKOPhase == null
@@ -1289,8 +1317,8 @@ fun PriceDisplayScreen(
     }
 
     // Cat spawn on timer when SPAWN_CAT true
-    LaunchedEffect(SPAWN_CAT) {
-        if (!SPAWN_CAT) return@LaunchedEffect
+    LaunchedEffect(isVisible, SPAWN_CAT) {
+        if (!isVisible || !SPAWN_CAT) return@LaunchedEffect
         while (true) {
             delay(CAT_SPAWN_INTERVAL_MS)
             if (!sprites.any { it.spriteType == SpriteType.CAT }) catSpawnTriggerCount++
@@ -1332,8 +1360,8 @@ fun PriceDisplayScreen(
     }
 
     // Audience (bg5): loop frames 0 -> 1 -> 2 -> 0 within current ring set at AUDIENCE_FRAME_DELAY_MS
-    LaunchedEffect(AUDIENCE_FRAMES_BY_RING.isNotEmpty()) {
-        if (AUDIENCE_FRAMES_BY_RING.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(isVisible, AUDIENCE_FRAMES_BY_RING.isNotEmpty()) {
+        if (!isVisible || AUDIENCE_FRAMES_BY_RING.isEmpty()) return@LaunchedEffect
         while (true) {
             delay(AUDIENCE_FRAME_DELAY_MS)
             val next = (backgroundFrameIndices.getOrElse(2) { 0 } + 1) % 3
@@ -1346,7 +1374,8 @@ fun PriceDisplayScreen(
     }
 
     // bg4 signs: clear all when ring frame index changes
-    LaunchedEffect(backgroundFrameIndices) {
+    LaunchedEffect(isVisible, backgroundFrameIndices) {
+        if (!isVisible) return@LaunchedEffect
         val ring = backgroundFrameIndices.getOrElse(0) { 0 }
         if (ring != lastRingFrameIndex) {
             signSpawns = emptyList()
@@ -1373,7 +1402,8 @@ fun PriceDisplayScreen(
     var togetherOffsetX by remember { mutableStateOf(0f) }
     var togetherDirection by remember { mutableStateOf(1) }  // 1 = right, -1 = left
 
-    LaunchedEffect(satoshiInDamage, lizardInDamage, satoshiKOPhase, lizardKOPhase) {
+    LaunchedEffect(isVisible, satoshiInDamage, lizardInDamage, satoshiKOPhase, lizardKOPhase) {
+        if (!isVisible) return@LaunchedEffect
         while (true) {
             delay(BOBBING_INTERVAL_MS)
             // Pause bobbing when either boxer is in damage or KO sequence
@@ -2490,8 +2520,8 @@ fun PriceDisplayScreen(
     }
 
     // bg4 signs: spawn a wave of 1, 2, or 3 signs at SIGN_SPAWN_INTERVAL_MS; at most one sign per Y row (paused when bg3 flash active)
-    LaunchedEffect(SIGN_SPAWN_INTERVAL_MS, screenSizeForSpawn.width, screenSizeForSpawn.height, satoshiKOPhase, lizardKOPhase) {
-        if (screenSizeForSpawn.width <= 0f || screenSizeForSpawn.height <= 0f) return@LaunchedEffect
+    LaunchedEffect(isVisible, SIGN_SPAWN_INTERVAL_MS, screenSizeForSpawn.width, screenSizeForSpawn.height, satoshiKOPhase, lizardKOPhase) {
+        if (!isVisible || screenSizeForSpawn.width <= 0f || screenSizeForSpawn.height <= 0f) return@LaunchedEffect
         while (true) {
             delay(SIGN_SPAWN_INTERVAL_MS)
             if (satoshiKOPhase == KOPhase.KNOCKED_DOWN || lizardKOPhase == KOPhase.KNOCKED_DOWN) continue
@@ -2518,7 +2548,8 @@ fun PriceDisplayScreen(
     }
 
     // bg4 signs: advance frames 0->1->2->Kill every SIGN_FRAME_DELAY_MS (paused when bg3 flash active)
-    LaunchedEffect(satoshiKOPhase, lizardKOPhase) {
+    LaunchedEffect(isVisible, satoshiKOPhase, lizardKOPhase) {
+        if (!isVisible) return@LaunchedEffect
         while (true) {
             delay(SIGN_FRAME_DELAY_MS)
             if (satoshiKOPhase == KOPhase.KNOCKED_DOWN || lizardKOPhase == KOPhase.KNOCKED_DOWN) continue
@@ -2532,8 +2563,8 @@ fun PriceDisplayScreen(
     val flashSizePx = 64f
 
     // bg3 flash: spawn FLASH_SPAWN_COUNT_DEFAULT in waves of 1..FLASH_MAX_SPAWN_TOGETHER when knockdown (no overlap, top half)
-    LaunchedEffect(flashActive, screenSizeForSpawn.width, screenSizeForSpawn.height) {
-        if (!flashActive || BG3_FLASH_FRAMES.size < 4) return@LaunchedEffect
+    LaunchedEffect(isVisible, flashActive, screenSizeForSpawn.width, screenSizeForSpawn.height) {
+        if (!isVisible || !flashActive || BG3_FLASH_FRAMES.size < 4) return@LaunchedEffect
         val w = screenSizeForSpawn.width
         val h = screenSizeForSpawn.height
         if (w <= 0f || h <= 0f) return@LaunchedEffect
@@ -2575,8 +2606,8 @@ fun PriceDisplayScreen(
     }
 
     // bg3 flash: advance frames 0->1->2->3->Kill; on kill show full-screen audience flash for FLASH_AUDIENCE_DISPLAY_MS
-    LaunchedEffect(flashActive) {
-        if (!flashActive || BG3_FLASH_FRAMES.size < 4) return@LaunchedEffect
+    LaunchedEffect(isVisible, flashActive) {
+        if (!isVisible || !flashActive || BG3_FLASH_FRAMES.size < 4) return@LaunchedEffect
         while (true) {
             delay(FLASH_FRAME_DELAY_MS)
             if (!flashActive) return@LaunchedEffect
@@ -3054,7 +3085,7 @@ fun PriceDisplayScreen(
         val screenHeightDp = LocalConfiguration.current.screenHeightDp
         val priceFontSize = (screenHeightDp / 20 * 0.4).sp
         val blockHeightFontSize = (screenHeightDp / 20 * 0.8 * 0.9).sp  // 2× price font, reduced 10%
-        val koCounterFontSize = (blockHeightFontSize.value * 0.9f).sp  // 90% of block height font
+        val koCounterFontSize = (blockHeightFontSize.value * 0.72f).sp  // 72% of block height (20% smaller than 90%)
         val blockLabelFontSize = (blockHeightFontSize.value * 0.6 * 1.25 * 0.9).sp  // reduced 10%
         val timerFontSize = (priceFontSize.value * 0.6 * 1.25).sp  // same as Offense/Defense labels
         val elapsedMs = lastBlockHeightUpdateTimeMs?.let { System.currentTimeMillis() - it } ?: 0L

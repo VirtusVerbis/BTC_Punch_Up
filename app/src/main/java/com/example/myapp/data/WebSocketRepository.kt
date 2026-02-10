@@ -503,7 +503,59 @@ class WebSocketRepository {
         binanceService.disconnect()
         coinbaseService.disconnect()
     }
-    
+
+    /**
+     * Fetch 1m klines from startTimeMs up to the last full minute and merge into chart data.
+     * Call on app resume to fill the chart gap for the time the app was in background.
+     */
+    fun backfillCandlesSince(startTimeMs: Long) {
+        scope.launch {
+            try {
+                val bucketMs = 60_000L
+                val startBucket = (startTimeMs / bucketMs) * bucketMs
+                val now = System.currentTimeMillis()
+                val endBucket = (now / bucketMs) * bucketMs
+                val limit = ((endBucket - startBucket) / bucketMs).toInt().coerceIn(1, BG2_MAX_CANDLES)
+                if (limit <= 0) return@launch
+                val api = Retrofit.Builder()
+                    .baseUrl("https://api.binance.com/")
+                    .addConverterFactory(GsonConverterFactory.create(Gson()))
+                    .build()
+                    .create(CryptoApiService::class.java)
+                val body = withContext(Dispatchers.IO) {
+                    api.getBinanceKlines(interval = "1m", limit = limit, startTime = startBucket, endTime = endBucket + bucketMs)
+                }
+                val json = body.string()
+                val gson = Gson()
+                val arr = gson.fromJson(json, JsonArray::class.java) ?: return@launch
+                val backfill = mutableListOf<Candle>()
+                for (i in 0 until arr.size()) {
+                    val row = arr.get(i).asJsonArray
+                    if (row.size() < 5) continue
+                    val openTime = row.get(0).asLong
+                    val open = row.get(1).asDouble
+                    val high = row.get(2).asDouble
+                    val low = row.get(3).asDouble
+                    val close = row.get(4).asDouble
+                    backfill.add(Candle(openTime, open, high, low, close))
+                }
+                synchronized(candleLock) {
+                    backfill.forEach { c -> candleBuckets[c.openTime] = c }
+                    val sorted = candleBuckets.values.sortedBy { it.openTime }
+                    val toDrop = sorted.size - BG2_MAX_CANDLES
+                    if (toDrop > 0) {
+                        sorted.take(toDrop).forEach { candleBuckets.remove(it.openTime) }
+                    }
+                    _candleData.value = candleBuckets.values.sortedBy { it.openTime }.takeLast(BG2_MAX_CANDLES)
+                }
+            } catch (e: Exception) {
+                if (ENABLE_EXCHANGE_LOGS) {
+                    Log.e("WebSocketRepository", "Resume candle backfill failed: ${e.message}", e)
+                }
+            }
+        }
+    }
+
     fun cleanup() {
         disconnect()
         scope.cancel()
