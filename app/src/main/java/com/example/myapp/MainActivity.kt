@@ -1256,6 +1256,8 @@ fun PriceDisplayScreen(
     var lizardDamagePoints by remember { mutableStateOf(0) }
     var satoshiKOPhase by remember { mutableStateOf<KOPhase?>(null) }
     var lizardKOPhase by remember { mutableStateOf<KOPhase?>(null) }
+    var satoshiKOCount by remember { mutableStateOf(0) }
+    var lizardKOCount by remember { mutableStateOf(0) }
 
     // Bitcoin block height: poll Mempool.space once per minute; reset elapsed timer only when value changes
     LaunchedEffect(Unit) {
@@ -2009,6 +2011,7 @@ fun PriceDisplayScreen(
                 lizardDamagePoints = (lizardDamagePoints + getDamagePoints(pending.punchType)).coerceAtMost(MAX_DAMAGE_POINTS)
                 if (lizardDamagePoints >= MAX_DAMAGE_POINTS && lizardKOPhase == null) {
                     lizardKOPhase = KOPhase.FALL
+                    satoshiKOCount = satoshiKOCount + 1
                     val koFrames = getLizardKOPhaseFrames(KOPhase.FALL)
                     sprites[lizardIndex] = lizardSprite.copy(
                         animationFrames = koFrames,
@@ -2070,6 +2073,7 @@ fun PriceDisplayScreen(
                 satoshiDamagePoints = (satoshiDamagePoints + getDamagePoints(pending.punchType)).coerceAtMost(MAX_DAMAGE_POINTS)
                 if (satoshiDamagePoints >= MAX_DAMAGE_POINTS && satoshiKOPhase == null) {
                     satoshiKOPhase = KOPhase.FALL
+                    lizardKOCount = lizardKOCount + 1
                     val koFrames = getSatoshiKOPhaseFrames(KOPhase.FALL)
                     sprites[satoshiIndex] = satoshiSprite.copy(
                         animationFrames = koFrames,
@@ -2326,6 +2330,7 @@ fun PriceDisplayScreen(
                             satoshiDamagePoints = (satoshiDamagePoints + getDamagePoints(pendingPunch)).coerceAtMost(MAX_DAMAGE_POINTS)
                             if (satoshiDamagePoints >= MAX_DAMAGE_POINTS && satoshiKOPhase == null) {
                                 satoshiKOPhase = KOPhase.FALL
+                                lizardKOCount = lizardKOCount + 1
                                 val koFrames = getSatoshiKOPhaseFrames(KOPhase.FALL)
                                 sprites[index] = updatedSprite.copy(
                                     animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
@@ -2432,6 +2437,7 @@ fun PriceDisplayScreen(
                             lizardDamagePoints = (lizardDamagePoints + getDamagePoints(pendingPunch)).coerceAtMost(MAX_DAMAGE_POINTS)
                             if (lizardDamagePoints >= MAX_DAMAGE_POINTS && lizardKOPhase == null) {
                                 lizardKOPhase = KOPhase.FALL
+                                satoshiKOCount = satoshiKOCount + 1
                                 val koFrames = getLizardKOPhaseFrames(KOPhase.FALL)
                                 sprites[idx] = updated.copy(
                                     animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
@@ -3048,6 +3054,7 @@ fun PriceDisplayScreen(
         val screenHeightDp = LocalConfiguration.current.screenHeightDp
         val priceFontSize = (screenHeightDp / 20 * 0.4).sp
         val blockHeightFontSize = (screenHeightDp / 20 * 0.8 * 0.9).sp  // 2× price font, reduced 10%
+        val koCounterFontSize = (blockHeightFontSize.value * 0.9f).sp  // 90% of block height font
         val blockLabelFontSize = (blockHeightFontSize.value * 0.6 * 1.25 * 0.9).sp  // reduced 10%
         val timerFontSize = (priceFontSize.value * 0.6 * 1.25).sp  // same as Offense/Defense labels
         val elapsedMs = lastBlockHeightUpdateTimeMs?.let { System.currentTimeMillis() - it } ?: 0L
@@ -3095,7 +3102,9 @@ fun PriceDisplayScreen(
             pulseDirection = PulseDirection.LEFT_TO_RIGHT,
             damagePoints = satoshiDamagePoints,
             showDamageBar = true,
-            maxDamagePoints = MAX_DAMAGE_POINTS
+            maxDamagePoints = MAX_DAMAGE_POINTS,
+            koCount = satoshiKOCount,
+            koCounterFontSize = koCounterFontSize
         )
         
         // Top right - Coinbase
@@ -3114,7 +3123,9 @@ fun PriceDisplayScreen(
             pulseDirection = PulseDirection.RIGHT_TO_LEFT,
             damagePoints = lizardDamagePoints,
             showDamageBar = true,
-            maxDamagePoints = MAX_DAMAGE_POINTS
+            maxDamagePoints = MAX_DAMAGE_POINTS,
+            koCount = lizardKOCount,
+            koCounterFontSize = koCounterFontSize
         )
     }
 }

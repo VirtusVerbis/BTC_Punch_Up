@@ -27,6 +27,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -46,7 +47,9 @@ fun PriceDisplay(
     pulseDirection: PulseDirection = PulseDirection.LEFT_TO_RIGHT,
     damagePoints: Int = 0,
     showDamageBar: Boolean = false,
-    maxDamagePoints: Int = 100
+    maxDamagePoints: Int = 100,
+    koCount: Int? = null,
+    koCounterFontSize: TextUnit? = null
 ) {
     val screenHeightDp = LocalConfiguration.current.screenHeightDp
     val priceFontSize = (screenHeightDp / 20 * 0.4).sp  // 60% smaller (40% of original)
@@ -171,6 +174,14 @@ fun PriceDisplay(
                         )
                 )
             }
+        }
+        if (koCount != null && koCounterFontSize != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = koCount.toString(),
+                fontSize = koCounterFontSize,
+                color = Color(0xFFFFEB3B)
+            )
         }
     }
 }
