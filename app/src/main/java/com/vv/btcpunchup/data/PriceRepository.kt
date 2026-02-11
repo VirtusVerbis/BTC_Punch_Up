@@ -1,4 +1,4 @@
-package com.example.myapp.data
+package com.vv.btcpunchup.data
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -8,7 +8,7 @@ import okhttp3.Request
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import com.google.gson.Gson
-import com.example.myapp.ENABLE_EXCHANGE_LOGS
+import com.vv.btcpunchup.ENABLE_EXCHANGE_LOGS
 
 class PriceRepository {
     private val binanceRetrofit = Retrofit.Builder()

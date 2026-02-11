@@ -4,15 +4,15 @@ plugins {
 }
 
 android {
-    namespace = "com.example.myapp"
-    compileSdk = 34
+    namespace = "com.vv.btcpunchup"
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.myapp"
+        applicationId = "com.vv.btcpunchup"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0a"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

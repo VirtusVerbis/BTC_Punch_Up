@@ -1,4 +1,4 @@
-package com.example.myapp.data
+package com.vv.btcpunchup.data
 
 // Coinbase WebSocket Message Types
 sealed class CoinbaseWebSocketMessage {

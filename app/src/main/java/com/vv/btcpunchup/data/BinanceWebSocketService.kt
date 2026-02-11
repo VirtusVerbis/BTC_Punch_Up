@@ -1,7 +1,7 @@
-package com.example.myapp.data
+package com.vv.btcpunchup.data
 
 import android.util.Log
-import com.example.myapp.ENABLE_EXCHANGE_LOGS
+import com.vv.btcpunchup.ENABLE_EXCHANGE_LOGS
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.channels.Channel

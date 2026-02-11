@@ -1,4 +1,4 @@
-package com.example.myapp.ui.theme
+package com.vv.btcpunchup.ui.theme
 
 import android.app.Activity
 import android.os.Build

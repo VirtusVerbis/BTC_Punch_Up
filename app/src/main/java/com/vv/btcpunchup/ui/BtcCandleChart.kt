@@ -1,4 +1,4 @@
-package com.example.myapp.ui
+package com.vv.btcpunchup.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -18,7 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
-import com.example.myapp.data.Candle
+import com.vv.btcpunchup.data.Candle
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

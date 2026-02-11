@@ -1,4 +1,4 @@
-package com.example.myapp.data
+package com.vv.btcpunchup.data
 
 /**
  * One 1-minute OHLC candle for the BG2 chart.

@@ -1,4 +1,4 @@
-package com.example.myapp.data
+package com.vv.btcpunchup.data
 
 import okhttp3.ResponseBody
 import retrofit2.http.GET

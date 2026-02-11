@@ -1,4 +1,4 @@
-package com.example.myapp
+package com.vv.btcpunchup
 
 import android.content.Context
 import android.os.Bundle
@@ -55,12 +55,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.toSize
-import com.example.myapp.data.PriceRepository
-import com.example.myapp.data.WebSocketRepository
-import com.example.myapp.ui.BtcCandleChart
-import com.example.myapp.ui.PriceDisplay
-import com.example.myapp.ui.PulseDirection
-import com.example.myapp.ui.theme.MyAppTheme
+import com.vv.btcpunchup.data.PriceRepository
+import com.vv.btcpunchup.data.WebSocketRepository
+import com.vv.btcpunchup.ui.BtcCandleChart
+import com.vv.btcpunchup.ui.PriceDisplay
+import com.vv.btcpunchup.ui.PulseDirection
+import com.vv.btcpunchup.ui.theme.MyAppTheme
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.collectAsState
 import java.io.File

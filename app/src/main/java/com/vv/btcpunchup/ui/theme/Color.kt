@@ -1,4 +1,4 @@
-package com.example.myapp.ui.theme
+package com.vv.btcpunchup.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

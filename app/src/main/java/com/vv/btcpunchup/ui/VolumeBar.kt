@@ -1,4 +1,4 @@
-package com.example.myapp.ui
+package com.vv.btcpunchup.ui
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween

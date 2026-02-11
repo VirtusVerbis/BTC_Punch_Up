@@ -1,4 +1,4 @@
-package com.example.myapp.data
+package com.vv.btcpunchup.data
 
 data class BinancePriceResponse(
     val symbol: String,

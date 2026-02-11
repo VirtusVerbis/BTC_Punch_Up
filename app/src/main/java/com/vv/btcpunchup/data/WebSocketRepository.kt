@@ -1,13 +1,13 @@
-package com.example.myapp.data
+package com.vv.btcpunchup.data
 
 import android.util.Log
-import com.example.myapp.BG2_CANDLE_EMIT_THROTTLE_MS
-import com.example.myapp.BG2_MAX_CANDLES
-import com.example.myapp.EXCHANGE_EMIT_THROTTLE_MS
-import com.example.myapp.ENABLE_EXCHANGE_LOGS
-import com.example.myapp.SPREAD_DEFENSE_MIN_PERCENT
-import com.example.myapp.SPREAD_DEFENSE_MULTIPLIER
-import com.example.myapp.SPREAD_MEDIAN_WINDOW_SECONDS
+import com.vv.btcpunchup.BG2_CANDLE_EMIT_THROTTLE_MS
+import com.vv.btcpunchup.BG2_MAX_CANDLES
+import com.vv.btcpunchup.EXCHANGE_EMIT_THROTTLE_MS
+import com.vv.btcpunchup.ENABLE_EXCHANGE_LOGS
+import com.vv.btcpunchup.SPREAD_DEFENSE_MIN_PERCENT
+import com.vv.btcpunchup.SPREAD_DEFENSE_MULTIPLIER
+import com.vv.btcpunchup.SPREAD_MEDIAN_WINDOW_SECONDS
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import kotlinx.coroutines.CoroutineScope

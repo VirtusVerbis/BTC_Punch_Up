@@ -1,4 +1,4 @@
-package com.example.myapp.ui
+package com.vv.btcpunchup.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
