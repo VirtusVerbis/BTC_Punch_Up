@@ -1,5 +1,6 @@
 package com.example.myapp
 
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
@@ -9,7 +10,9 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -45,7 +48,9 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.material3.Text
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.alpha
@@ -85,6 +90,8 @@ const val ENABLE_PUNCHING = true
 const val SPLASH_DISPLAY_MS = 2500L   // 3 seconds default; skip on first touch
 const val SPLASH_FADE_OUT_MS = 300    // fade-out duration in ms
 
+
+
 // Satoshi sprite scale multiplier (adjustable for testing)
 const val SATOSHI_SCALE = 3.5f  // 1.0 = 100% size, 1.5 = 150% size, 0.5 = 50% size
 
@@ -94,12 +101,19 @@ const val SATOSHI_Y_POSITION = 0.70f // 0.65f
 
 // Satoshi X position factor (adjustable for testing)
 // 0.0 = left edge, 0.5 = center, 1.0 = right edge
-const val SATOSHI_X_POSITION = 0.60f //0.6f //0.525f
+const val SATOSHI_X_POSITION = 0.5f //0.60f //0.6f //0.525f
 
 // Lizard (villain) sprite constants
 const val LIZARD_SCALE = 5f
 const val LIZARD_Y_POSITION = 0.66f //0.64f  // 0.57f
-const val LIZARD_X_POSITION =  0.90f // 0.9f //0.765f
+const val LIZARD_X_POSITION =  0.5f //0.90f // 0.9f //0.765f
+
+
+const val SATOSHI_CENTER_BIAS_DP = 20f  // Horizontal center correction in dp (sprite-space), same role as LIZARD_CENTER_BIAS_DP
+const val LIZARD_CENTER_BIAS_DP = 115f  // Horizontal center correction in dp (sprite-space), tweak as needed
+const val SATOSHI_CROSSHAIR_X_OFFSET_DP = -20f  // Visual alignment: add to crosshair X (dp); positive = right, negative = left
+const val LIZARD_CROSSHAIR_X_OFFSET_DP = -115f   // Visual alignment: add to crosshair X (dp); positive = right, negative = left
+const val ALIGNMENT_SAVED_FLASH_MS = 5_000L  // How long "Saved" is shown after disabling Boxer Alignment (only when offsets were changed)
 
 // Ring rotation (bg0): test mode and direction
 const val TEST_RING_ROTATION = true  // true = use timer; false = trigger on Bitcoin block height update
@@ -141,7 +155,10 @@ const val FLASH_MAX_SPAWN_TOGETHER = 2
 const val FLASH_AUDIENCE_DISPLAY_MS = 150L
 const val FLASH_SPAWN_WAVE_DELAY_MS = 550L
 const val FLASH_AUDIENCE_MIN_INTERVAL_MS = 334L  // keep at or above 334L anything below risk of seizure inducing.  Min ms between audience flash starts (3/sec max; photosafety)
+
+
 // bg2 memes: Dancing Chika Brrr (DCB_) and future sequences; each sequence has its own constants
+const val MEME_PRICE_WINDOW_MS = 60_000L  // 1 min: lookback for % change and cooldown between meme displays
 const val DCB_MIN_FRAME_INTERVAL_MS = 80L   // photosafety: min ms between frame changes for this sequence
 const val DCB_FRAME_DELAY_MS = 250L // 100L        // ms per frame; use max(DCB_FRAME_DELAY_MS, DCB_MIN_FRAME_INTERVAL_MS) at runtime
 const val DCB_TOP_OFFSET_FRACTION = 0.17f  // fraction of screen height from top (below UI labels / damage bar)
@@ -201,6 +218,7 @@ const val BOBBING_Y_STEPS_PER_FULL_X_CYCLE = 3  // Y increments applied per full
 const val BOBBING_TOGETHER_MAX_X_LEFT = -200f// -100f   // Max pixels the pair moves left (both boxers together)
 const val BOBBING_TOGETHER_MAX_X_RIGHT = 200f // 100f    // Max pixels the pair moves right (both boxers together)
 const val BOBBING_TOGETHER_STEP_PX = 5f         // Pixels per tick for together movement (independent of BOBBING_STEP_PX)
+const val BOBBING_START_DELAY_MS = 150L        // Delay after screen visible before bobbing starts
 
 // Depth scale (boxers appear smaller when up, larger when down) – per sprite for tuning
 // bigger value = do more of it
@@ -249,6 +267,9 @@ const val KO_FALL_DISPLAY_MS = 400L
 const val KO_KNOCKED_DOWN_DISPLAY_MS = 5000L
 const val KO_RISE_DISPLAY_MS = 4600L
 
+// Simultaneous KO detection window (ms)
+const val SIMULTANEOUS_KO_WINDOW_MS = 150L
+
 // Damage points per punch type (adjustable for testing KO animation faster)
 const val DAMAGE_POINTS_JAB = 1
 const val DAMAGE_POINTS_BODY = 3
@@ -257,6 +278,8 @@ const val DAMAGE_POINTS_CROSS = 5
 const val DAMAGE_POINTS_UPPERCUT = 8
 // KO threshold and damage bar cap (lower for faster KO testing)
 const val MAX_DAMAGE_POINTS = 100 // 100
+
+
 
 // Bitcoin block height (Mempool) refresh interval (ms); once per minute
 const val BLOCK_HEIGHT_REFRESH_INTERVAL_MS = 60_000L
@@ -965,6 +988,19 @@ fun PriceDisplayScreen(
     var audienceFlashUntilMs by remember { mutableStateOf(0L) }
     var lastAudienceFlashStartMs by remember { mutableStateOf(0L) }
     var activeMemeSpawn by remember { mutableStateOf<MemeSpawn?>(null) }
+    var binancePriceHistory by remember { mutableStateOf(emptyList<Pair<Long, Double>>()) }
+    var coinbasePriceHistory by remember { mutableStateOf(emptyList<Pair<Long, Double>>()) }
+    var lastMemeTriggerTimeMs by remember { mutableStateOf(0L) }
+    var showCenterGuides by remember { mutableStateOf(false) }
+    var savedSatoshiBiasPx by remember { mutableStateOf<Float?>(null) }
+    var savedLizardBiasPx by remember { mutableStateOf<Float?>(null) }
+    var alignmentSatoshiBiasPx by remember { mutableStateOf(0f) }
+    var alignmentLizardBiasPx by remember { mutableStateOf(0f) }
+    var alignmentModifiedThisSession by remember { mutableStateOf(false) }
+    var alignmentDragInTopHalf by remember { mutableStateOf(true) }
+    var savedFlashVisibleUntilMs by remember { mutableStateOf(0L) }
+    var savedFlashOn by remember { mutableStateOf(true) }
+    var movementStartTimeMs by remember { mutableStateOf<Long?>(null) }
 
     // Lifecycle: only run periodic work when app is visible (saves battery when backgrounded)
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -972,7 +1008,12 @@ fun PriceDisplayScreen(
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, e ->
             when (e) {
-                Lifecycle.Event.ON_START -> isVisible = true
+                Lifecycle.Event.ON_START -> {
+                    isVisible = true
+                    if (movementStartTimeMs == null) {
+                        movementStartTimeMs = System.currentTimeMillis()
+                    }
+                }
                 Lifecycle.Event.ON_STOP -> isVisible = false
                 else -> {}
             }
@@ -1155,6 +1196,8 @@ fun PriceDisplayScreen(
             binanceWebSocketData.price?.let { price ->
                 binancePreviousPrice = binancePrice
                 binancePrice = price
+                val now = System.currentTimeMillis()
+                binancePriceHistory = (binancePriceHistory + (now to price)).filter { it.first > now - 2 * MEME_PRICE_WINDOW_MS }
             }
             binanceIsConnected = binanceWebSocketData.isConnected
             binanceBuyVolume = binanceWebSocketData.buyVolume
@@ -1167,6 +1210,8 @@ fun PriceDisplayScreen(
             coinbaseWebSocketData.price?.let { price ->
                 coinbasePreviousPrice = coinbasePrice
                 coinbasePrice = price
+                val now = System.currentTimeMillis()
+                coinbasePriceHistory = (coinbasePriceHistory + (now to price)).filter { it.first > now - 2 * MEME_PRICE_WINDOW_MS }
             }
             coinbaseIsConnected = coinbaseWebSocketData.isConnected
             coinbaseBuyVolume = coinbaseWebSocketData.buyVolume
@@ -1183,6 +1228,8 @@ fun PriceDisplayScreen(
                     onSuccess = { price ->
                         binancePreviousPrice = binancePrice
                         binancePrice = price
+                        val now = System.currentTimeMillis()
+                        binancePriceHistory = (binancePriceHistory + (now to price)).filter { it.first > now - 2 * MEME_PRICE_WINDOW_MS }
                         binanceIsConnected = true
                     },
                     onFailure = {
@@ -1195,6 +1242,8 @@ fun PriceDisplayScreen(
                     onSuccess = { price ->
                         coinbasePreviousPrice = coinbasePrice
                         coinbasePrice = price
+                        val now = System.currentTimeMillis()
+                        coinbasePriceHistory = (coinbasePriceHistory + (now to price)).filter { it.first > now - 2 * MEME_PRICE_WINDOW_MS }
                         coinbaseIsConnected = true
                     },
                     onFailure = {
@@ -1286,6 +1335,51 @@ fun PriceDisplayScreen(
     var satoshiKOCount by remember { mutableStateOf(0) }
     var lizardKOCount by remember { mutableStateOf(0) }
 
+    // KO award tracking: used to distinguish single vs simultaneous KOs
+    var firstKOTimeMillis by remember { mutableStateOf<Long?>(null) }
+    var koAwardedToSatoshi by remember { mutableStateOf(false) }
+    var koAwardedToLizard by remember { mutableStateOf(false) }
+
+    fun awardKO(attackerIsSatoshi: Boolean, nowMillis: Long) {
+        val firstTime = firstKOTimeMillis
+
+        // Case 3 – Already both awarded: ignore further KO attempts
+        if (koAwardedToSatoshi && koAwardedToLizard) {
+            return
+        }
+
+        // Case 1 – First KO in this exchange
+        if (firstTime == null && !koAwardedToSatoshi && !koAwardedToLizard) {
+            firstKOTimeMillis = nowMillis
+            if (attackerIsSatoshi) {
+                satoshiKOCount = satoshiKOCount + 1
+                koAwardedToSatoshi = true
+            } else {
+                lizardKOCount = lizardKOCount + 1
+                koAwardedToLizard = true
+            }
+            return
+        }
+
+        // Case 2 – Potential simultaneous KO: exactly one boxer has been awarded so far
+        if (firstTime != null && (koAwardedToSatoshi.xor(koAwardedToLizard))) {
+            val withinWindow = nowMillis - firstTime <= SIMULTANEOUS_KO_WINDOW_MS
+            if (!withinWindow) {
+                // Outside the simultaneous window; do not award a second KO
+                return
+            }
+
+            // Award KO only to the boxer who hasn't yet been awarded in this exchange
+            if (attackerIsSatoshi && !koAwardedToSatoshi) {
+                satoshiKOCount = satoshiKOCount + 1
+                koAwardedToSatoshi = true
+            } else if (!attackerIsSatoshi && !koAwardedToLizard) {
+                lizardKOCount = lizardKOCount + 1
+                koAwardedToLizard = true
+            }
+        }
+    }
+
     // Bitcoin block height: poll Mempool.space once per minute; reset elapsed timer only when value changes
     LaunchedEffect(isVisible) {
         if (!isVisible) return@LaunchedEffect
@@ -1306,10 +1400,11 @@ fun PriceDisplayScreen(
     }
 
     // Test mode: trigger ring rotation on a timer instead of block height
-    LaunchedEffect(isVisible, TEST_RING_ROTATION) {
+    LaunchedEffect(isVisible, TEST_RING_ROTATION, showCenterGuides) {
         if (!isVisible || !TEST_RING_ROTATION) return@LaunchedEffect
         while (true) {
             delay(RING_ROTATE_FREQUENCY_MS)
+            if (showCenterGuides) continue
             val noKo = satoshiKOPhase == null && lizardKOPhase == null
             val notRotating = !isRingRotating
             if (noKo && notRotating) ringRotationTriggerCount++
@@ -1326,8 +1421,8 @@ fun PriceDisplayScreen(
     }
 
     // Run one ring rotation when trigger fires (block height update or test timer)
-    LaunchedEffect(ringRotationTriggerCount) {
-        if (ringRotationTriggerCount == 0 || isRingRotating || RING_FRAMES.size < 2) return@LaunchedEffect
+    LaunchedEffect(ringRotationTriggerCount, showCenterGuides) {
+        if (showCenterGuides || ringRotationTriggerCount == 0 || isRingRotating || RING_FRAMES.size < 2) return@LaunchedEffect
         isRingRotating = true
         try {
             val right = when (RING_ROTATE_DIRECTION) {
@@ -1346,6 +1441,7 @@ fun PriceDisplayScreen(
                 var elapsed = 0L
                 while (elapsed < RING_ROTATION_FRAME_DELAY_MS) {
                     delay(50)
+                    if (showCenterGuides) continue
                     if (satoshiKOPhase == null && lizardKOPhase == null) elapsed += 50
                 }
             }
@@ -1360,10 +1456,11 @@ fun PriceDisplayScreen(
     }
 
     // Audience (bg5): loop frames 0 -> 1 -> 2 -> 0 within current ring set at AUDIENCE_FRAME_DELAY_MS
-    LaunchedEffect(isVisible, AUDIENCE_FRAMES_BY_RING.isNotEmpty()) {
+    LaunchedEffect(isVisible, AUDIENCE_FRAMES_BY_RING.isNotEmpty(), showCenterGuides) {
         if (!isVisible || AUDIENCE_FRAMES_BY_RING.isEmpty()) return@LaunchedEffect
         while (true) {
             delay(AUDIENCE_FRAME_DELAY_MS)
+            if (showCenterGuides) continue
             val next = (backgroundFrameIndices.getOrElse(2) { 0 } + 1) % 3
             backgroundFrameIndices = listOf(
                 backgroundFrameIndices.getOrElse(0) { 0 },
@@ -1402,12 +1499,18 @@ fun PriceDisplayScreen(
     var togetherOffsetX by remember { mutableStateOf(0f) }
     var togetherDirection by remember { mutableStateOf(1) }  // 1 = right, -1 = left
 
-    LaunchedEffect(isVisible, satoshiInDamage, lizardInDamage, satoshiKOPhase, lizardKOPhase) {
+    LaunchedEffect(isVisible, satoshiInDamage, lizardInDamage, satoshiKOPhase, lizardKOPhase, showCenterGuides) {
         if (!isVisible) return@LaunchedEffect
         while (true) {
             delay(BOBBING_INTERVAL_MS)
+            if (showCenterGuides) continue
             // Pause bobbing when either boxer is in damage or KO sequence
             if (satoshiInDamage || lizardInDamage || satoshiKOPhase != null || lizardKOPhase != null) continue
+
+            // Pause bobbing until the start delay has elapsed since the screen became visible
+            val elapsedSinceVisible = movementStartTimeMs?.let { System.currentTimeMillis() - it } ?: 0L
+            if (elapsedSinceVisible < BOBBING_START_DELAY_MS) continue
+
             val oldOffsetX = movementOffsetX
             movementOffsetX += movementDirection * BOBBING_STEP_PX
             when {
@@ -1457,7 +1560,12 @@ fun PriceDisplayScreen(
     }
     
     // Determine punch types from BUY volumes
-    LaunchedEffect(ENABLE_PUNCHING, binanceBuyVolume, coinbaseBuyVolume, maxBinanceBuyVolume, maxCoinbaseBuyVolume) {
+    LaunchedEffect(ENABLE_PUNCHING, binanceBuyVolume, coinbaseBuyVolume, maxBinanceBuyVolume, maxCoinbaseBuyVolume, showCenterGuides) {
+        if (showCenterGuides) {
+            currentLeftPunch = null
+            currentRightPunch = null
+            return@LaunchedEffect
+        }
         if (ENABLE_PUNCH_LOGS) {
             Log.d("PunchDebug", "=== PUNCH STATE UPDATE LaunchedEffect RUNNING ===")
             Log.d("PunchDebug", "Inputs - Binance BUY: $binanceBuyVolume (max: $maxBinanceBuyVolume), Coinbase BUY: $coinbaseBuyVolume (max: $maxCoinbaseBuyVolume)")
@@ -1495,7 +1603,12 @@ fun PriceDisplayScreen(
     }
     
     // Determine Lizard punch types from SELL volumes (villain mirrors hero)
-    LaunchedEffect(ENABLE_PUNCHING, binanceSellVolume, coinbaseSellVolume, maxBinanceSellVolume, maxCoinbaseSellVolume) {
+    LaunchedEffect(ENABLE_PUNCHING, binanceSellVolume, coinbaseSellVolume, maxBinanceSellVolume, maxCoinbaseSellVolume, showCenterGuides) {
+        if (showCenterGuides) {
+            currentLizardLeftPunch = null
+            currentLizardRightPunch = null
+            return@LaunchedEffect
+        }
         if (!ENABLE_PUNCHING) {
             currentLizardLeftPunch = null
             currentLizardRightPunch = null
@@ -1506,7 +1619,8 @@ fun PriceDisplayScreen(
     }
     
     // Update Satoshi sprite based on punch state
-    LaunchedEffect(currentLeftPunch, currentRightPunch, sprites, binanceBuyVolume, coinbaseBuyVolume, maxBinanceBuyVolume, maxCoinbaseBuyVolume, lastPunchTime, isBinanceDefense, lastDefenseType, lastDefenseSwitchTime, lastDefenseCompletionTime, satoshiInDamage, satoshiKOPhase, lizardKOPhase) {
+    LaunchedEffect(currentLeftPunch, currentRightPunch, sprites, binanceBuyVolume, coinbaseBuyVolume, maxBinanceBuyVolume, maxCoinbaseBuyVolume, lastPunchTime, isBinanceDefense, lastDefenseType, lastDefenseSwitchTime, lastDefenseCompletionTime, satoshiInDamage, satoshiKOPhase, lizardKOPhase, showCenterGuides) {
+        if (showCenterGuides) return@LaunchedEffect
         // Block punch/defense updates while in damage or KO sequence
         if (satoshiKOPhase != null) {
             // #region agent log
@@ -1814,7 +1928,8 @@ fun PriceDisplayScreen(
     
     // Update Lizard sprite (villain - uses SELL volume, offense when sell > buy)
     val isLizardDefense = !isBinanceDefense  // Lizard defends when hero attacks
-    LaunchedEffect(currentLizardLeftPunch, currentLizardRightPunch, sprites, binanceSellVolume, coinbaseSellVolume, maxBinanceSellVolume, maxCoinbaseSellVolume, lastLizardPunchTime, isLizardDefense, lastLizardDefenseType, lastLizardDefenseSwitchTime, lastLizardDefenseCompletionTime, lizardInDamage, lizardKOPhase, satoshiKOPhase) {
+    LaunchedEffect(currentLizardLeftPunch, currentLizardRightPunch, sprites, binanceSellVolume, coinbaseSellVolume, maxBinanceSellVolume, maxCoinbaseSellVolume, lastLizardPunchTime, isLizardDefense, lastLizardDefenseType, lastLizardDefenseSwitchTime, lastLizardDefenseCompletionTime, lizardInDamage, lizardKOPhase, satoshiKOPhase, showCenterGuides) {
+        if (showCenterGuides) return@LaunchedEffect
         // #region agent log
         agentLog("MainActivity:LizardSpriteUpdate", "entry", "{\"lizardInDamage\":$lizardInDamage,\"isLizardDefense\":$isLizardDefense}", "A")
         // #endregion
@@ -2041,7 +2156,7 @@ fun PriceDisplayScreen(
                 lizardDamagePoints = (lizardDamagePoints + getDamagePoints(pending.punchType)).coerceAtMost(MAX_DAMAGE_POINTS)
                 if (lizardDamagePoints >= MAX_DAMAGE_POINTS && lizardKOPhase == null) {
                     lizardKOPhase = KOPhase.FALL
-                    satoshiKOCount = satoshiKOCount + 1
+                    awardKO(attackerIsSatoshi = true, nowMillis = System.currentTimeMillis())
                     val koFrames = getLizardKOPhaseFrames(KOPhase.FALL)
                     sprites[lizardIndex] = lizardSprite.copy(
                         animationFrames = koFrames,
@@ -2103,7 +2218,7 @@ fun PriceDisplayScreen(
                 satoshiDamagePoints = (satoshiDamagePoints + getDamagePoints(pending.punchType)).coerceAtMost(MAX_DAMAGE_POINTS)
                 if (satoshiDamagePoints >= MAX_DAMAGE_POINTS && satoshiKOPhase == null) {
                     satoshiKOPhase = KOPhase.FALL
-                    lizardKOCount = lizardKOCount + 1
+                    awardKO(attackerIsSatoshi = false, nowMillis = System.currentTimeMillis())
                     val koFrames = getSatoshiKOPhaseFrames(KOPhase.FALL)
                     sprites[satoshiIndex] = satoshiSprite.copy(
                         animationFrames = koFrames,
@@ -2229,6 +2344,12 @@ fun PriceDisplayScreen(
                 sizeScale = SATOSHI_SCALE
             )
         }
+        // Reset KO-award tracking once both boxers are out of KO state
+        if (satoshiKOPhase == null && lizardKOPhase == null) {
+            firstKOTimeMillis = null
+            koAwardedToSatoshi = false
+            koAwardedToLizard = false
+        }
     }
     LaunchedEffect(lizardKOPhase != null) {
         if (lizardKOPhase != KOPhase.FALL) return@LaunchedEffect
@@ -2272,6 +2393,12 @@ fun PriceDisplayScreen(
                 currentDefenseType = null, isDefending = false, playAnimationOnce = false,
                 sizeScale = LIZARD_SCALE
             )
+        }
+        // Reset KO-award tracking once both boxers are out of KO state
+        if (satoshiKOPhase == null && lizardKOPhase == null) {
+            firstKOTimeMillis = null
+            koAwardedToSatoshi = false
+            koAwardedToLizard = false
         }
     }
 
@@ -2360,7 +2487,7 @@ fun PriceDisplayScreen(
                             satoshiDamagePoints = (satoshiDamagePoints + getDamagePoints(pendingPunch)).coerceAtMost(MAX_DAMAGE_POINTS)
                             if (satoshiDamagePoints >= MAX_DAMAGE_POINTS && satoshiKOPhase == null) {
                                 satoshiKOPhase = KOPhase.FALL
-                                lizardKOCount = lizardKOCount + 1
+                                awardKO(attackerIsSatoshi = false, nowMillis = System.currentTimeMillis())
                                 val koFrames = getSatoshiKOPhaseFrames(KOPhase.FALL)
                                 sprites[index] = updatedSprite.copy(
                                     animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
@@ -2467,7 +2594,7 @@ fun PriceDisplayScreen(
                             lizardDamagePoints = (lizardDamagePoints + getDamagePoints(pendingPunch)).coerceAtMost(MAX_DAMAGE_POINTS)
                             if (lizardDamagePoints >= MAX_DAMAGE_POINTS && lizardKOPhase == null) {
                                 lizardKOPhase = KOPhase.FALL
-                                satoshiKOCount = satoshiKOCount + 1
+                                awardKO(attackerIsSatoshi = true, nowMillis = System.currentTimeMillis())
                                 val koFrames = getLizardKOPhaseFrames(KOPhase.FALL)
                                 sprites[idx] = updated.copy(
                                     animationFrames = koFrames, currentFrameIndex = 0, isAnimated = true,
@@ -2513,6 +2640,26 @@ fun PriceDisplayScreen(
     var screenSizeForSpawn by remember { mutableStateOf(Size.Zero) }
     val density = LocalDensity.current.density
     val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        val prefs = context.getSharedPreferences("boxer_alignment", Context.MODE_PRIVATE)
+        val s = prefs.getFloat("satoshi_center_bias_px", Float.NaN)
+        val l = prefs.getFloat("lizard_center_bias_px", Float.NaN)
+        if (!s.isNaN()) savedSatoshiBiasPx = s
+        if (!l.isNaN()) savedLizardBiasPx = l
+    }
+    LaunchedEffect(savedFlashVisibleUntilMs) {
+        if (savedFlashVisibleUntilMs > 0L) {
+            val until = savedFlashVisibleUntilMs
+            delay(maxOf(0L, until - System.currentTimeMillis()))
+            savedFlashVisibleUntilMs = 0L
+        }
+    }
+    LaunchedEffect(savedFlashVisibleUntilMs) {
+        while (savedFlashVisibleUntilMs > 0L && System.currentTimeMillis() < savedFlashVisibleUntilMs) {
+            delay(300)
+            savedFlashOn = !savedFlashOn
+        }
+    }
     val dcbFrames = remember(context) {
         (1..DCB_FRAME_COUNT).map {
             context.resources.getIdentifier("dancing_chika_brr_%03d".format(it), "drawable", context.packageName)
@@ -2629,67 +2776,78 @@ fun PriceDisplayScreen(
         }
     }
 
-    // bg2 memes: only one active at a time; first qualifying trigger is shown, all others skipped until current despawns
-    LaunchedEffect(binancePrice, binancePreviousPrice, coinbasePrice, coinbasePreviousPrice, activeMemeSpawn) {
+    // bg2 memes: only one active at a time; first qualifying trigger is shown; 1-min price window and max 1 meme per minute
+    LaunchedEffect(binancePrice, coinbasePrice, binancePriceHistory, coinbasePriceHistory, activeMemeSpawn, lastMemeTriggerTimeMs) {
         if (activeMemeSpawn != null) return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        if (now - lastMemeTriggerTimeMs < MEME_PRICE_WINDOW_MS) return@LaunchedEffect
+        val cutoff = now - MEME_PRICE_WINDOW_MS
+        val binancePriceOld = binancePriceHistory.filter { it.first <= cutoff }.maxByOrNull { it.first }?.second
+        val coinbasePriceOld = coinbasePriceHistory.filter { it.first <= cutoff }.maxByOrNull { it.first }?.second
         val upThreshold = DCB_PRICE_INCREASE_PERCENT / 100f
         val upThresholdMax = DCB_PRICE_INCREASE_PERCENT_MAX / 100f
-        val binanceUp = binancePreviousPrice != null && binancePrice != null && binancePreviousPrice!! > 0 && run {
-            val rise = (binancePrice!! - binancePreviousPrice!!) / binancePreviousPrice!!
+        val binanceUp = binancePrice != null && binancePriceOld != null && binancePriceOld > 0 && run {
+            val rise = (binancePrice!! - binancePriceOld) / binancePriceOld
             rise >= upThreshold && rise <= upThresholdMax
         }
-        val coinbaseUp = coinbasePreviousPrice != null && coinbasePrice != null && coinbasePreviousPrice!! > 0 && run {
-            val rise = (coinbasePrice!! - coinbasePreviousPrice!!) / coinbasePreviousPrice!!
+        val coinbaseUp = coinbasePrice != null && coinbasePriceOld != null && coinbasePriceOld > 0 && run {
+            val rise = (coinbasePrice!! - coinbasePriceOld) / coinbasePriceOld
             rise >= upThreshold && rise <= upThresholdMax
         }
         if (binanceUp || coinbaseUp) {
+            lastMemeTriggerTimeMs = now
             activeMemeSpawn = MemeSpawn(sequenceId = DCB_SEQUENCE_ID, frameIndex = 0)
             return@LaunchedEffect
         }
         val neoUpThreshold = NEO_PRICE_INCREASE_PERCENT / 100f
         val neoUpThresholdMax = NEO_PRICE_INCREASE_PERCENT_MAX / 100f
-        val neoBinanceUp = binancePreviousPrice != null && binancePrice != null && binancePreviousPrice!! > 0 && run {
-            val rise = (binancePrice!! - binancePreviousPrice!!) / binancePreviousPrice!!
+        val neoBinanceUp = binancePrice != null && binancePriceOld != null && binancePriceOld > 0 && run {
+            val rise = (binancePrice!! - binancePriceOld) / binancePriceOld
             rise >= neoUpThreshold && rise <= neoUpThresholdMax
         }
-        val neoCoinbaseUp = coinbasePreviousPrice != null && coinbasePrice != null && coinbasePreviousPrice!! > 0 && run {
-            val rise = (coinbasePrice!! - coinbasePreviousPrice!!) / coinbasePreviousPrice!!
+        val neoCoinbaseUp = coinbasePrice != null && coinbasePriceOld != null && coinbasePriceOld > 0 && run {
+            val rise = (coinbasePrice!! - coinbasePriceOld) / coinbasePriceOld
             rise >= neoUpThreshold && rise <= neoUpThresholdMax
         }
         if (neoBinanceUp || neoCoinbaseUp) {
+            lastMemeTriggerTimeMs = now
             activeMemeSpawn = MemeSpawn(sequenceId = NEO_SEQUENCE_ID, frameIndex = 0)
             return@LaunchedEffect
         }
         val dropThreshold = BDWW_PRICE_DROP_PERCENT / 100f
         val dropThresholdMax = BDWW_PRICE_DROP_PERCENT_MAX / 100f
-        val binanceDown = binancePreviousPrice != null && binancePrice != null && binancePreviousPrice!! > 0 && run {
-            val drop = (binancePreviousPrice!! - binancePrice!!) / binancePreviousPrice!!
+        val binanceDown = binancePrice != null && binancePriceOld != null && binancePriceOld > 0 && run {
+            val drop = (binancePriceOld - binancePrice!!) / binancePriceOld
             drop >= dropThreshold && drop <= dropThresholdMax
         }
-        val coinbaseDown = coinbasePreviousPrice != null && coinbasePrice != null && coinbasePreviousPrice!! > 0 && run {
-            val drop = (coinbasePreviousPrice!! - coinbasePrice!!) / coinbasePreviousPrice!!
+        val coinbaseDown = coinbasePrice != null && coinbasePriceOld != null && coinbasePriceOld > 0 && run {
+            val drop = (coinbasePriceOld - coinbasePrice!!) / coinbasePriceOld
             drop >= dropThreshold && drop <= dropThresholdMax
         }
         if (binanceDown || coinbaseDown) {
+            lastMemeTriggerTimeMs = now
             activeMemeSpawn = MemeSpawn(sequenceId = BDWW_SEQUENCE_ID, frameIndex = 0)
             return@LaunchedEffect
         }
         val frDropThreshold = FR_PRICE_DROP_PERCENT / 100f
         val frDropThresholdMax = FR_PRICE_DROP_PERCENT_MAX / 100f
-        val frBinanceDown = binancePreviousPrice != null && binancePrice != null && binancePreviousPrice!! > 0 && run {
-            val drop = (binancePreviousPrice!! - binancePrice!!) / binancePreviousPrice!!
+        val frBinanceDown = binancePrice != null && binancePriceOld != null && binancePriceOld > 0 && run {
+            val drop = (binancePriceOld - binancePrice!!) / binancePriceOld
             drop >= frDropThreshold && drop <= frDropThresholdMax
         }
-        val frCoinbaseDown = coinbasePreviousPrice != null && coinbasePrice != null && coinbasePreviousPrice!! > 0 && run {
-            val drop = (coinbasePreviousPrice!! - coinbasePrice!!) / coinbasePreviousPrice!!
+        val frCoinbaseDown = coinbasePrice != null && coinbasePriceOld != null && coinbasePriceOld > 0 && run {
+            val drop = (coinbasePriceOld - coinbasePrice!!) / coinbasePriceOld
             drop >= frDropThreshold && drop <= frDropThresholdMax
         }
-        if (frBinanceDown || frCoinbaseDown) activeMemeSpawn = MemeSpawn(sequenceId = FR_SEQUENCE_ID, frameIndex = 0)
+        if (frBinanceDown || frCoinbaseDown) {
+            lastMemeTriggerTimeMs = now
+            activeMemeSpawn = MemeSpawn(sequenceId = FR_SEQUENCE_ID, frameIndex = 0)
+        }
     }
 
     // bg2 memes: advance frame (or wait display duration for single-frame); kill after last frame / duration
-    LaunchedEffect(activeMemeSpawn, bg2Visible) {
-        if (activeMemeSpawn == null || bg2Visible) return@LaunchedEffect
+    LaunchedEffect(activeMemeSpawn, bg2Visible, showCenterGuides) {
+        if (showCenterGuides || activeMemeSpawn == null || bg2Visible) return@LaunchedEffect
         val spawn = activeMemeSpawn ?: return@LaunchedEffect
         val frameCount = when (spawn.sequenceId) {
             DCB_SEQUENCE_ID -> DCB_FRAME_COUNT
@@ -3007,76 +3165,156 @@ fun PriceDisplayScreen(
         // Render sprites in layer order (1=Lizard, 2=Satoshi, 3=Cat)
         val rangeY = BOBBING_MAX_Y_DOWN - BOBBING_MAX_Y_UP
         val tY = if (rangeY != 0f) (movementOffsetY - BOBBING_MAX_Y_UP) / rangeY else 0.5f
+        val defaultSatoshiBiasPx = SATOSHI_CENTER_BIAS_DP * density
+        val defaultLizardBiasPx = LIZARD_CENTER_BIAS_DP * density
+        val effectiveSatoshiBiasPx = if (showCenterGuides) alignmentSatoshiBiasPx else (savedSatoshiBiasPx ?: defaultSatoshiBiasPx)
+        val effectiveLizardBiasPx = if (showCenterGuides) alignmentLizardBiasPx else (savedLizardBiasPx ?: defaultLizardBiasPx)
         sprites.sortedBy { it.layer }.forEach { spriteData ->
             key(spriteData.spriteType) {
-            val xBobbingOffset = when (spriteData.spriteType) {
-                SpriteType.SATOSHI -> movementOffsetX + togetherOffsetX
-                SpriteType.LIZARD -> -movementOffsetX + togetherOffsetX
-                SpriteType.CAT -> 0f
-                else -> 0f
-            }
-            val yBobbingOffsetCat = if (spriteData.spriteType == SpriteType.CAT) 0f else movementOffsetY
-            val depthForSprite = when (spriteData.spriteType) {
-                SpriteType.SATOSHI -> (1f - SCALE_SMALLER_PERCENT_SATOSHI / 100f) +
-                    tY * ((1f + SCALE_LARGER_PERCENT_SATOSHI / 100f) - (1f - SCALE_SMALLER_PERCENT_SATOSHI / 100f))
-                SpriteType.LIZARD -> (1f - SCALE_SMALLER_PERCENT_LIZARD / 100f) +
-                    tY * ((1f + SCALE_LARGER_PERCENT_LIZARD / 100f) - (1f - SCALE_SMALLER_PERCENT_LIZARD / 100f))
-                else -> 1f
-            }
-            Sprite(
-                spriteData = spriteData,
-                xBobbingOffset = xBobbingOffset,
-                yBobbingOffset = yBobbingOffsetCat,
-                depthScaleMultiplier = depthForSprite,
-                contentDescription = "Sprite",
-                opponentInKO = when (spriteData.spriteType) {
-                    SpriteType.SATOSHI -> lizardKOPhase != null
-                    SpriteType.LIZARD -> satoshiKOPhase != null
-                    else -> false
-                },
-                onPlayOnceComplete = callback@{ spriteType ->
-                    // KO sequence is driven by LaunchedEffect timers; ignore callback for KO to avoid double-advance
-                    if (spriteType == SpriteType.SATOSHI && satoshiKOPhase != null) return@callback
-                    if (spriteType == SpriteType.LIZARD && lizardKOPhase != null) return@callback
-                    // Normal damage clear
-                    if (spriteType == SpriteType.SATOSHI && satoshiInDamage) {
-                        val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
-                        if (satoshiSprite != null) {
-                            val idx = sprites.indexOf(satoshiSprite)
-                            sprites[idx] = satoshiSprite.copy(
-                                animationFrames = SATOSHI_IDLE_FRAMES,
-                                currentFrameIndex = 0, isAnimated = true,
-                                currentPunchType = null, currentHandSide = null, isPunching = false,
-                                currentDefenseType = null, isDefending = false, playAnimationOnce = false,
-                                sizeScale = SATOSHI_SCALE
-                            )
+                val xBobbingOffset = if (showCenterGuides) 0f else when (spriteData.spriteType) {
+                    SpriteType.SATOSHI -> movementOffsetX + togetherOffsetX
+                    SpriteType.LIZARD -> -movementOffsetX + togetherOffsetX
+                    SpriteType.CAT -> 0f
+                    else -> 0f
+                }
+                val yBobbingOffsetCat = if (spriteData.spriteType == SpriteType.CAT) 0f else movementOffsetY
+                val depthForSprite = when (spriteData.spriteType) {
+                    SpriteType.SATOSHI -> (1f - SCALE_SMALLER_PERCENT_SATOSHI / 100f) +
+                        tY * ((1f + SCALE_LARGER_PERCENT_SATOSHI / 100f) - (1f - SCALE_SMALLER_PERCENT_SATOSHI / 100f))
+                    SpriteType.LIZARD -> (1f - SCALE_SMALLER_PERCENT_LIZARD / 100f) +
+                        tY * ((1f + SCALE_LARGER_PERCENT_LIZARD / 100f) - (1f - SCALE_SMALLER_PERCENT_LIZARD / 100f))
+                    else -> 1f
+                }
+                val centerBiasOverride = when (spriteData.spriteType) {
+                    SpriteType.SATOSHI -> effectiveSatoshiBiasPx
+                    SpriteType.LIZARD -> effectiveLizardBiasPx
+                    else -> null
+                }
+                Sprite(
+                    spriteData = spriteData,
+                    xBobbingOffset = xBobbingOffset,
+                    yBobbingOffset = yBobbingOffsetCat,
+                    depthScaleMultiplier = depthForSprite,
+                    contentDescription = "Sprite",
+                    opponentInKO = when (spriteData.spriteType) {
+                        SpriteType.SATOSHI -> lizardKOPhase != null
+                        SpriteType.LIZARD -> satoshiKOPhase != null
+                        else -> false
+                    },
+                    centerBiasPxOverride = centerBiasOverride,
+                    animationsPaused = showCenterGuides,
+                    onPlayOnceComplete = callback@{ spriteType ->
+                        // KO sequence is driven by LaunchedEffect timers; ignore callback for KO to avoid double-advance
+                        if (spriteType == SpriteType.SATOSHI && satoshiKOPhase != null) return@callback
+                        if (spriteType == SpriteType.LIZARD && lizardKOPhase != null) return@callback
+                        // Normal damage clear
+                        if (spriteType == SpriteType.SATOSHI && satoshiInDamage) {
+                            val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+                            if (satoshiSprite != null) {
+                                val idx = sprites.indexOf(satoshiSprite)
+                                sprites[idx] = satoshiSprite.copy(
+                                    animationFrames = SATOSHI_IDLE_FRAMES,
+                                    currentFrameIndex = 0, isAnimated = true,
+                                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                                    currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                                    sizeScale = SATOSHI_SCALE
+                                )
+                            }
+                            satoshiInDamage = false
+                            satoshiDamageType = null
+                            if (DAMAGE_DEBUG) {
+                                Log.d("DamageDebug", "{\"h\":\"A\",\"loc\":\"damage_completion_cleared\",\"ts\":${System.currentTimeMillis()}}")
+                            }
+                            agentLog("MainActivity:DamageCompletion", "satoshi_cleared", "{\"ts\":${System.currentTimeMillis()}}", "D")
                         }
-                        satoshiInDamage = false
-                        satoshiDamageType = null
-                        if (DAMAGE_DEBUG) {
-                            Log.d("DamageDebug", "{\"h\":\"A\",\"loc\":\"damage_completion_cleared\",\"ts\":${System.currentTimeMillis()}}")
+                        if (spriteType == SpriteType.LIZARD && lizardInDamage) {
+                            val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD }
+                            if (lizardSprite != null) {
+                                val idx = sprites.indexOf(lizardSprite)
+                                sprites[idx] = lizardSprite.copy(
+                                    animationFrames = LIZARD_IDLE_FRAMES,
+                                    currentFrameIndex = 0, isAnimated = true,
+                                    currentPunchType = null, currentHandSide = null, isPunching = false,
+                                    currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                                    sizeScale = LIZARD_SCALE
+                                )
+                            }
+                            val wasBodyType = lizardDamageType == DamageAnimationType.LEFT_DAMAGE_BODY || lizardDamageType == DamageAnimationType.RIGHT_DAMAGE_BODY
+                            lizardInDamage = false
+                            lizardDamageType = null
+                            if (wasBodyType) agentLog("MainActivity:LizardDamageCompletion", "lizard_body_cleared", "{\"ts\":${System.currentTimeMillis()}}", "H2")
                         }
-                        agentLog("MainActivity:DamageCompletion", "satoshi_cleared", "{\"ts\":${System.currentTimeMillis()}}", "D")
                     }
-                    if (spriteType == SpriteType.LIZARD && lizardInDamage) {
-                        val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD }
-                        if (lizardSprite != null) {
-                            val idx = sprites.indexOf(lizardSprite)
-                            sprites[idx] = lizardSprite.copy(
-                                animationFrames = LIZARD_IDLE_FRAMES,
-                                currentFrameIndex = 0, isAnimated = true,
-                                currentPunchType = null, currentHandSide = null, isPunching = false,
-                                currentDefenseType = null, isDefending = false, playAnimationOnce = false,
-                                sizeScale = LIZARD_SCALE
-                            )
-                        }
-                        val wasBodyType = lizardDamageType == DamageAnimationType.LEFT_DAMAGE_BODY || lizardDamageType == DamageAnimationType.RIGHT_DAMAGE_BODY
-                        lizardInDamage = false
-                        lizardDamageType = null
-                        if (wasBodyType) agentLog("MainActivity:LizardDamageCompletion", "lizard_body_cleared", "{\"ts\":${System.currentTimeMillis()}}", "H2")
+                )
+            }
+        }
+
+        // Center alignment guides overlay (for debugging): vertical and horizontal blue lines through screen center
+        if (showCenterGuides && screenSizeForSpawn.width > 0f && screenSizeForSpawn.height > 0f) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val centerX = size.width / 2f
+                val centerY = size.height / 2f
+                val strokeWidth = 2.dp.toPx()
+                val blue = Color(0xFF0000FF)
+
+                // Vertical line
+                drawLine(
+                    color = blue,
+                    start = Offset(centerX, 0f),
+                    end = Offset(centerX, size.height),
+                    strokeWidth = strokeWidth
+                )
+                // Horizontal line
+                drawLine(
+                    color = blue,
+                    start = Offset(0f, centerY),
+                    end = Offset(size.width, centerY),
+                    strokeWidth = strokeWidth
+                )
+            }
+            // Boxer crosshairs: Satoshi orange, Lizard green (at image center = position - bias per user); full-screen lines
+            val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+            val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD }
+            if (satoshiSprite != null || lizardSprite != null) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val strokeWidth = 2.dp.toPx()
+                    satoshiSprite?.let { s ->
+                        val cx = s.spriteState.position.x + effectiveSatoshiBiasPx + SATOSHI_CROSSHAIR_X_OFFSET_DP.dp.toPx()
+                        val cy = s.spriteState.position.y
+                        val orange = Color(0xFFFF8C00)
+                        drawLine(orange, Offset(cx, 0f), Offset(cx, size.height), strokeWidth)
+                        drawLine(orange, Offset(0f, cy), Offset(size.width, cy), strokeWidth)
+                    }
+                    lizardSprite?.let { s ->
+                        val cx = s.spriteState.position.x + effectiveLizardBiasPx + LIZARD_CROSSHAIR_X_OFFSET_DP.dp.toPx()
+                        val cy = s.spriteState.position.y
+                        val green = Color(0xFF00C853)
+                        drawLine(green, Offset(cx, 0f), Offset(cx, size.height), strokeWidth)
+                        drawLine(green, Offset(0f, cy), Offset(size.width, cy), strokeWidth)
                     }
                 }
-            )
+            }
+            // Full-screen drag: top half = Lizard offset, bottom half = Satoshi offset
+            if (screenSizeForSpawn.height > 0f) {
+                val centerY = screenSizeForSpawn.height / 2f
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(showCenterGuides) {
+                            if (!showCenterGuides) return@pointerInput
+                            detectDragGestures(
+                                onDragStart = { offset -> alignmentDragInTopHalf = offset.y < centerY },
+                                onDrag = { _, dragAmount ->
+                                    if (alignmentDragInTopHalf) {
+                                        alignmentLizardBiasPx += dragAmount.x
+                                    } else {
+                                        alignmentSatoshiBiasPx += dragAmount.x
+                                    }
+                                    alignmentModifiedThisSession = true
+                                }
+                            )
+                        }
+                )
             }
         }
         
@@ -3103,7 +3341,26 @@ fun PriceDisplayScreen(
             Text(
                 text = "Time",
                 fontSize = blockLabelFontSize,
-                color = Color(0xFFF7931A)  // Bitcoin orange
+                color = Color(0xFFF7931A),  // Bitcoin orange
+                modifier = Modifier.clickable {
+                    showCenterGuides = !showCenterGuides
+                    if (showCenterGuides) {
+                        alignmentSatoshiBiasPx = savedSatoshiBiasPx ?: (SATOSHI_CENTER_BIAS_DP * density)
+                        alignmentLizardBiasPx = savedLizardBiasPx ?: (LIZARD_CENTER_BIAS_DP * density)
+                        alignmentModifiedThisSession = false
+                    } else {
+                        if (alignmentModifiedThisSession) {
+                            context.getSharedPreferences("boxer_alignment", Context.MODE_PRIVATE).edit()
+                                .putFloat("satoshi_center_bias_px", alignmentSatoshiBiasPx)
+                                .putFloat("lizard_center_bias_px", alignmentLizardBiasPx)
+                                .apply()
+                            savedSatoshiBiasPx = alignmentSatoshiBiasPx
+                            savedLizardBiasPx = alignmentLizardBiasPx
+                            savedFlashOn = true
+                            savedFlashVisibleUntilMs = System.currentTimeMillis() + ALIGNMENT_SAVED_FLASH_MS
+                        }
+                    }
+                }
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
@@ -3117,6 +3374,15 @@ fun PriceDisplayScreen(
                 fontSize = timerFontSize,
                 color = if (elapsedMs >= TIMER_FLASH_WHEN_ELAPSED_MS && timerOverTenMinFlashOn) Color.White else Color(0xFFF7931A)
             )
+            if (System.currentTimeMillis() < savedFlashVisibleUntilMs) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Saved",
+                    fontSize = koCounterFontSize,
+                    fontWeight = FontWeight.Bold,
+                    color = if (savedFlashOn) Color.Red else Color.White
+                )
+            }
         }
         // Top left - Binance
         PriceDisplay(
@@ -3170,7 +3436,9 @@ fun Sprite(
     depthScaleMultiplier: Float = 1f,
     contentDescription: String = "Sprite",
     opponentInKO: Boolean = false,
-    onPlayOnceComplete: ((SpriteType) -> Unit)? = null
+    onPlayOnceComplete: ((SpriteType) -> Unit)? = null,
+    centerBiasPxOverride: Float? = null,
+    animationsPaused: Boolean = false
 ) {
     val spriteSize = spriteData.spriteSizeDp.dp
     val baseSizeDp = spriteSize * spriteData.sizeScale
@@ -3208,7 +3476,7 @@ fun Sprite(
     
     // Animate frames if sprite is animated - use unique key to prevent restarts
     // Remove spriteData.isAnimated from dependencies to prevent restarts during animation
-    LaunchedEffect(punchAnimationKey) {
+    LaunchedEffect(punchAnimationKey, animationsPaused) {
         if (spriteData.spriteType == SpriteType.LIZARD && spriteData.isAnimated && spriteData.animationFrames.isNotEmpty()) {
             // #region agent log
             val branch = when {
@@ -3223,6 +3491,7 @@ fun Sprite(
             if (spriteData.isPunching && spriteData.currentPunchType != null) {
                 // Play punch animation once, then stop
                 for (frameIndex in spriteData.animationFrames.indices) {
+                    while (animationsPaused) { delay(100) }
                     currentFrameIndex = frameIndex
                     currentResourceId = spriteData.animationFrames[frameIndex]
                     delay(ANIMATION_FRAME_DELAY_MS)
@@ -3237,6 +3506,7 @@ fun Sprite(
                 if (spriteData.spriteType == SpriteType.LIZARD && frameCount == 3) agentLog("Sprite:playOnce", "Lizard_body_damage_start", "{\"frameCount\":$frameCount,\"key\":\"$punchAnimationKey\",\"ts\":${System.currentTimeMillis()}}", "H3")
                 // #endregion
                 for (frameIndex in spriteData.animationFrames.indices) {
+                    while (animationsPaused) { delay(100) }
                     if (DAMAGE_DEBUG) {
                         Log.d("DamageDebug", "{\"h\":\"C\",\"loc\":\"sprite_playOnce_frame\",\"spriteType\":\"${spriteData.spriteType}\",\"frameIndex\":$frameIndex,\"ts\":${System.currentTimeMillis()}}")
                     }
@@ -3259,6 +3529,10 @@ fun Sprite(
                     currentResourceId = frames[0]
                 }
                 while (true) {
+                    if (animationsPaused) {
+                        delay(100)
+                        continue
+                    }
                     if (frames.isEmpty()) break
                     currentFrameIndex = (currentFrameIndex + 1) % frames.size
                     currentResourceId = frames[currentFrameIndex]
@@ -3275,6 +3549,12 @@ fun Sprite(
         spriteData.spriteResourceId
     }
     
+    val density = LocalDensity.current.density
+    val centerBiasPx = centerBiasPxOverride ?: when (spriteData.spriteType) {
+        SpriteType.LIZARD -> LIZARD_CENTER_BIAS_DP * density
+        SpriteType.SATOSHI -> SATOSHI_CENTER_BIAS_DP * density
+        else -> 0f
+    }
     Image(
         painter = painterResource(id = displayResourceId),
         contentDescription = contentDescription,
@@ -3282,7 +3562,7 @@ fun Sprite(
             .offset {
                 // position is sprite center; use base size so layout is fixed and scale is applied from center
                 val halfPx = baseSizeDp.toPx() / 2f
-                val leftPx = spriteData.spriteState.position.x + xBobbingOffset - halfPx
+                val leftPx = spriteData.spriteState.position.x + xBobbingOffset + centerBiasPx - halfPx
                 val topPx = spriteData.spriteState.position.y + yBobbingOffset - halfPx
                 // #region agent log
                 agentLog("Sprite:offset", "layout_offset", "{\"spriteType\":\"${spriteData.spriteType}\",\"positionX\":${spriteData.spriteState.position.x},\"positionY\":${spriteData.spriteState.position.y},\"halfPx\":$halfPx,\"xBobbing\":$xBobbingOffset,\"leftPx\":$leftPx,\"centerX\":${spriteData.spriteState.position.x + xBobbingOffset}}", "H2")
