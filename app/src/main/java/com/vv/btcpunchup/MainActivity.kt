@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Alignment
@@ -839,23 +841,26 @@ class MainActivity : ComponentActivity() {
     private var lastPausedAtMs: Long? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             MyAppTheme {
-                var showSplash by remember { mutableStateOf(true) }
-                if (showSplash) {
-                    SplashScreen(onDismiss = { showSplash = false })
-                } else {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = Color.Black
-                    ) {
-                        PriceDisplayScreen(
-                            onRepositoryCreated = { repository ->
-                                webSocketRepository = repository
-                            }
-                        )
+                Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+                    var showSplash by remember { mutableStateOf(true) }
+                    if (showSplash) {
+                        SplashScreen(onDismiss = { showSplash = false })
+                    } else {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = Color.Black
+                        ) {
+                            PriceDisplayScreen(
+                                onRepositoryCreated = { repository ->
+                                    webSocketRepository = repository
+                                }
+                            )
+                        }
                     }
                 }
             }
