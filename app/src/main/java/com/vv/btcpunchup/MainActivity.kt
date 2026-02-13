@@ -100,9 +100,12 @@ const val ENABLE_DODGING = true
 // Toggle punching for testing - false = no punch animations (Satoshi idle or defense only)
 const val ENABLE_PUNCHING = true
 
-// Splash screen: display duration and fade-out animation
+// Podcast splash (first screen): display duration and fade-out animation
 const val SPLASH_DISPLAY_MS = 2500L   // 3 seconds default; skip on first touch
 const val SPLASH_FADE_OUT_MS = 300    // fade-out duration in ms
+// Title splash (second screen): same defaults
+const val TITLE_DISPLAY_MS = 3500L
+const val TITLE_FADE_OUT_MS = 300
 
 
 
@@ -880,11 +883,23 @@ class MainActivity : ComponentActivity() {
             val content = @Composable {
                 MyAppTheme {
                     Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                        var showSplash by remember { mutableStateOf(true) }
-                        if (showSplash) {
-                            SplashScreen(onDismiss = { showSplash = false })
-                        } else {
-                            Surface(
+                        var splashPhase by remember { mutableStateOf(0) }  // 0 = Podcast, 1 = Title, 2 = main
+                        when (splashPhase) {
+                            0 -> SplashScreen(
+                                drawableRes = R.drawable.vv_splash,
+                                displayMs = SPLASH_DISPLAY_MS,
+                                fadeOutMs = SPLASH_FADE_OUT_MS,
+                                contentScale = ContentScale.Crop,
+                                onDismiss = { splashPhase = 1 }
+                            )
+                            1 -> SplashScreen(
+                                drawableRes = R.drawable.btc_punchup_cover,
+                                displayMs = TITLE_DISPLAY_MS,
+                                fadeOutMs = TITLE_FADE_OUT_MS,
+                                contentScale = ContentScale.FillBounds,
+                                onDismiss = { splashPhase = 2 }
+                            )
+                            else -> Surface(
                                 modifier = Modifier.fillMaxSize(),
                                 color = Color.Black
                             ) {
@@ -1016,16 +1031,22 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun SplashScreen(onDismiss: () -> Unit) {
+fun SplashScreen(
+    drawableRes: Int,
+    displayMs: Long,
+    fadeOutMs: Int,
+    contentScale: ContentScale = ContentScale.Crop,
+    onDismiss: () -> Unit
+) {
     var dismissRequested by remember { mutableStateOf(false) }
     val alpha = remember { Animatable(1f) }
     LaunchedEffect(Unit) {
-        delay(SPLASH_DISPLAY_MS)
+        delay(displayMs)
         dismissRequested = true
     }
     LaunchedEffect(dismissRequested) {
         if (dismissRequested) {
-            alpha.animateTo(0f, tween(SPLASH_FADE_OUT_MS))
+            alpha.animateTo(0f, tween(fadeOutMs))
             onDismiss()
         }
     }
@@ -1041,10 +1062,10 @@ fun SplashScreen(onDismiss: () -> Unit) {
                 .alpha(alpha.value)
         ) {
             Image(
-                painter = painterResource(R.drawable.vv_splash),
+                painter = painterResource(drawableRes),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+                contentScale = contentScale
             )
         }
     }
