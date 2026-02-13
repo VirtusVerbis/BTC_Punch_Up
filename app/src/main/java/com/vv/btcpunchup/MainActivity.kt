@@ -1,8 +1,13 @@
 package com.vv.btcpunchup
 
+import android.annotation.SuppressLint
+import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
@@ -18,6 +23,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -28,14 +34,17 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -43,7 +52,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -63,6 +74,7 @@ import com.vv.btcpunchup.ui.BtcCandleChart
 import com.vv.btcpunchup.ui.PriceDisplay
 import com.vv.btcpunchup.ui.PulseDirection
 import com.vv.btcpunchup.ui.theme.MyAppTheme
+import kotlin.math.min
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.collectAsState
 import java.io.File
@@ -839,38 +851,136 @@ private fun agentLog(location: String, message: String, dataStr: String, hypothe
 class MainActivity : ComponentActivity() {
     private var webSocketRepository: WebSocketRepository? = null
     private var lastPausedAtMs: Long? = null
+    private var isInPipState: MutableState<Boolean>? = null
 
+    @SuppressLint("UnusedBoxWithConstraintsScope")
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        isInPipState = mutableStateOf(false)
         setContent {
-            MyAppTheme {
-                Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                    var showSplash by remember { mutableStateOf(true) }
-                    if (showSplash) {
-                        SplashScreen(onDismiss = { showSplash = false })
-                    } else {
-                        Surface(
-                            modifier = Modifier.fillMaxSize(),
-                            color = Color.Black
+            val isInPip = isInPipState!!.value
+            val content = @Composable {
+                MyAppTheme {
+                    Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+                        var showSplash by remember { mutableStateOf(true) }
+                        if (showSplash) {
+                            SplashScreen(onDismiss = { showSplash = false })
+                        } else {
+                            Surface(
+                                modifier = Modifier.fillMaxSize(),
+                                color = Color.Black
+                            ) {
+                                PriceDisplayScreen(
+                                    onRepositoryCreated = { repository ->
+                                        webSocketRepository = repository
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            // Single composition path: content() always called from one place. Scale final display when in PIP.
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val density = LocalDensity.current
+                var rememberedFullSizePx by remember { mutableStateOf(0 to 0) }
+                SideEffect {
+                    if (!isInPip) {
+                        rememberedFullSizePx = with(density) { maxWidth.roundToPx() to maxHeight.roundToPx() }
+                    }
+                }
+                val scale = if (isInPip) {
+                    val (fullW, fullH) = rememberedFullSizePx
+                    val fallbackW = with(density) { 360.dp.roundToPx() }
+                    val fallbackH = with(density) { 640.dp.roundToPx() }
+                    val w = if (fullW > 0 && fullH > 0) fullW else fallbackW
+                    val h = if (fullW > 0 && fullH > 0) fullH else fallbackH
+                    val pipW = with(density) { maxWidth.roundToPx() }
+                    val pipH = with(density) { maxHeight.roundToPx() }
+                    if (w > 0 && h > 0) min(pipW.toFloat() / w, pipH.toFloat() / h) else 1f
+                } else 1f
+                Layout(
+                    modifier = Modifier.fillMaxSize(),
+                    content = {
+                        Box(
+                            modifier = Modifier.graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                clip = isInPip
+                                if (isInPip) transformOrigin = TransformOrigin(0f, 0f)
+                            }
                         ) {
-                            PriceDisplayScreen(
-                                onRepositoryCreated = { repository ->
-                                    webSocketRepository = repository
+                            val (fullW, fullH) = rememberedFullSizePx
+                            val designWidthDp = if (fullW > 0 && fullH > 0) (fullW / density.density).toInt() else 360
+                            val designHeightDp = if (fullW > 0 && fullH > 0) (fullH / density.density).toInt() else 640
+                            val effectiveConfig = if (isInPip) {
+                                Configuration(LocalConfiguration.current).apply {
+                                    screenWidthDp = designWidthDp
+                                    screenHeightDp = designHeightDp
                                 }
+                            } else LocalConfiguration.current
+                            CompositionLocalProvider(LocalConfiguration provides effectiveConfig) {
+                                content()
+                            }
+                        }
+                    }
+                ) { measurables, constraints ->
+                    if (isInPip) {
+                        val (fullW, fullH) = rememberedFullSizePx
+                        val fallbackW = with(density) { 360.dp.roundToPx() }
+                        val fallbackH = with(density) { 640.dp.roundToPx() }
+                        val w = if (fullW > 0 && fullH > 0) fullW else fallbackW
+                        val h = if (fullW > 0 && fullH > 0) fullH else fallbackH
+                        val placeable = measurables.first().measure(Constraints.fixed(w, h))
+                        val pipW = with(density) { maxWidth.roundToPx() }
+                        val pipH = with(density) { maxHeight.roundToPx() }
+                        val scalePx = if (w > 0 && h > 0) min(pipW.toFloat() / w, pipH.toFloat() / h) else 1f
+                        layout(pipW, pipH) {
+                            placeable.place(
+                                ((pipW - w * scalePx) / 2).toInt(),
+                                ((pipH - h * scalePx) / 2).toInt()
                             )
+                        }
+                    } else {
+                        val placeable = measurables.first().measure(constraints)
+                        layout(placeable.width, placeable.height) {
+                            placeable.place(0, 0)
                         }
                     }
                 }
             }
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val pipBuilder = PictureInPictureParams.Builder().setAspectRatio(Rational(9, 16))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                pipBuilder.setAutoEnterEnabled(true)
+            }
+            setPictureInPictureParams(pipBuilder.build())
+        }
     }
-    
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            enterPictureInPictureMode(
+                PictureInPictureParams.Builder().setAspectRatio(Rational(9, 16)).build()
+            )
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isInPipState?.value = isInPictureInPictureMode
+    }
+
     override fun onPause() {
         super.onPause()
         lastPausedAtMs = System.currentTimeMillis()
-        webSocketRepository?.disconnect()
+        if (isInPipState?.value != true) {
+            webSocketRepository?.disconnect()
+        }
     }
 
     override fun onResume() {
