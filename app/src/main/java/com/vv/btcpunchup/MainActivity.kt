@@ -181,7 +181,7 @@ const val DCB_PRICE_INCREASE_PERCENT_MAX = 3.0f // max % rise; trigger only when
 private const val DCB_SEQUENCE_ID = "Dancing_Chika_Brrr"
 private const val DCB_FRAME_COUNT = 40
 // bg2 memes: Buy Dip With What (BDWW_) – single frame, fixed display duration
-const val BDWW_DISPLAY_MS = 20_000L              // how long to show the meme before kill (default 20 seconds)
+const val BDWW_DISPLAY_MS = 30_000L              // how long to show the meme before kill (default 20 seconds)
 const val BDWW_PRICE_DROP_PERCENT = 2.0001f         // trigger: BTC price -this % (min) on any exchange starts BDWW
 const val BDWW_PRICE_DROP_PERCENT_MAX = 3.0f    // max % drop; trigger only when drop in [min, max]; set max >= min
 const val BDWW_TOP_OFFSET_FRACTION = 0.08f        // fraction of screen height from top (below UI labels)
@@ -189,7 +189,7 @@ const val BDWW_ASPECT_HEIGHT_PER_WIDTH = 1f//0.55f   // image height/width for f
 private const val BDWW_SEQUENCE_ID = "Buy_Dip_With_What"
 private val BDWW_FRAMES = listOf(R.drawable.buy_dip_with_what)
 // bg2 memes: NEO – single frame, 20s display; trigger on 2–3% price rise
-const val NEO_DISPLAY_MS = 20_000L
+const val NEO_DISPLAY_MS = 30_000L
 const val NEO_PRICE_INCREASE_PERCENT = 1.0f
 const val NEO_PRICE_INCREASE_PERCENT_MAX = 2.0f
 const val NEO_TOP_OFFSET_FRACTION = 0.08f
@@ -197,13 +197,29 @@ const val NEO_ASPECT_HEIGHT_PER_WIDTH = 1f
 private const val NEO_SEQUENCE_ID = "NEO"
 private val NEO_FRAMES = listOf(R.drawable.neo)
 // bg2 memes: FIRST_RULE (FR_) – single frame, 20s display; trigger on 2–3% price drop
-const val FR_DISPLAY_MS = 20_000L
+const val FR_DISPLAY_MS = 30_000L
 const val FR_PRICE_DROP_PERCENT = 1.0f
 const val FR_PRICE_DROP_PERCENT_MAX = 2.0f
 const val FR_TOP_OFFSET_FRACTION = 0.09f
 const val FR_ASPECT_HEIGHT_PER_WIDTH = 1f
 private const val FR_SEQUENCE_ID = "FIRST_RULE"
 private val FR_FRAMES = listOf(R.drawable.btc_first_rule)
+// bg2 memes: ARROW_UP – single frame, 20s display; trigger on price increase (like NEO)
+const val ARROW_UP_DISPLAY_MS = 10_000L
+const val ARROW_UP_PRICE_INCREASE_PERCENT = 0.1f
+const val ARROW_UP_PRICE_INCREASE_PERCENT_MAX = 0.9999f
+const val ARROW_UP_TOP_OFFSET_FRACTION = -0.15f
+const val ARROW_UP_ASPECT_HEIGHT_PER_WIDTH = 3.5f
+private const val ARROW_UP_SEQUENCE_ID = "ARROW_UP"
+private val ARROW_UP_FRAMES = listOf(R.drawable.arrow_up_0)
+// bg2 memes: ARROW_DOWN – single frame, 20s display; trigger on price drop (like FR)
+const val ARROW_DOWN_DISPLAY_MS = 10_000L
+const val ARROW_DOWN_PRICE_DROP_PERCENT = 0.1f
+const val ARROW_DOWN_PRICE_DROP_PERCENT_MAX = 0.9999f
+const val ARROW_DOWN_TOP_OFFSET_FRACTION = -0.15f
+const val ARROW_DOWN_ASPECT_HEIGHT_PER_WIDTH = 3.5f
+private const val ARROW_DOWN_SEQUENCE_ID = "ARROW_DOWN"
+private val ARROW_DOWN_FRAMES = listOf(R.drawable.arrow_down_0)
 // bg4 signs: buy_btc_sign (5 frames, 0->1->2->3->4->Kill); spawn 1-3 per wave; cleared when ring frame changes
 private val BUY_BTC_SIGN_FRAMES = listOf(
     R.drawable.buy_btc_sign_0, R.drawable.buy_btc_sign_1, R.drawable.buy_btc_sign_2, R.drawable.buy_btc_sign_3, R.drawable.buy_btc_sign_4
@@ -2929,6 +2945,21 @@ fun PriceDisplayScreen(
             activeMemeSpawn = MemeSpawn(sequenceId = NEO_SEQUENCE_ID, frameIndex = 0)
             return@LaunchedEffect
         }
+        val arrowUpThreshold = ARROW_UP_PRICE_INCREASE_PERCENT / 100f
+        val arrowUpThresholdMax = ARROW_UP_PRICE_INCREASE_PERCENT_MAX / 100f
+        val arrowUpBinanceUp = binancePrice != null && binancePriceOld != null && binancePriceOld > 0 && run {
+            val rise = (binancePrice!! - binancePriceOld) / binancePriceOld
+            rise >= arrowUpThreshold && rise <= arrowUpThresholdMax
+        }
+        val arrowUpCoinbaseUp = coinbasePrice != null && coinbasePriceOld != null && coinbasePriceOld > 0 && run {
+            val rise = (coinbasePrice!! - coinbasePriceOld) / coinbasePriceOld
+            rise >= arrowUpThreshold && rise <= arrowUpThresholdMax
+        }
+        if (arrowUpBinanceUp || arrowUpCoinbaseUp) {
+            lastMemeTriggerTimeMs = now
+            activeMemeSpawn = MemeSpawn(sequenceId = ARROW_UP_SEQUENCE_ID, frameIndex = 0)
+            return@LaunchedEffect
+        }
         val dropThreshold = BDWW_PRICE_DROP_PERCENT / 100f
         val dropThresholdMax = BDWW_PRICE_DROP_PERCENT_MAX / 100f
         val binanceDown = binancePrice != null && binancePriceOld != null && binancePriceOld > 0 && run {
@@ -2957,6 +2988,21 @@ fun PriceDisplayScreen(
         if (frBinanceDown || frCoinbaseDown) {
             lastMemeTriggerTimeMs = now
             activeMemeSpawn = MemeSpawn(sequenceId = FR_SEQUENCE_ID, frameIndex = 0)
+            return@LaunchedEffect
+        }
+        val arrowDownDropThreshold = ARROW_DOWN_PRICE_DROP_PERCENT / 100f
+        val arrowDownDropThresholdMax = ARROW_DOWN_PRICE_DROP_PERCENT_MAX / 100f
+        val arrowDownBinanceDown = binancePrice != null && binancePriceOld != null && binancePriceOld > 0 && run {
+            val drop = (binancePriceOld - binancePrice!!) / binancePriceOld
+            drop >= arrowDownDropThreshold && drop <= arrowDownDropThresholdMax
+        }
+        val arrowDownCoinbaseDown = coinbasePrice != null && coinbasePriceOld != null && coinbasePriceOld > 0 && run {
+            val drop = (coinbasePriceOld - coinbasePrice!!) / coinbasePriceOld
+            drop >= arrowDownDropThreshold && drop <= arrowDownDropThresholdMax
+        }
+        if (arrowDownBinanceDown || arrowDownCoinbaseDown) {
+            lastMemeTriggerTimeMs = now
+            activeMemeSpawn = MemeSpawn(sequenceId = ARROW_DOWN_SEQUENCE_ID, frameIndex = 0)
         }
     }
 
@@ -2969,6 +3015,8 @@ fun PriceDisplayScreen(
             BDWW_SEQUENCE_ID -> 1
             NEO_SEQUENCE_ID -> 1
             FR_SEQUENCE_ID -> 1
+            ARROW_UP_SEQUENCE_ID -> 1
+            ARROW_DOWN_SEQUENCE_ID -> 1
             else -> 0
         }
         val delayMs = when (spawn.sequenceId) {
@@ -2976,6 +3024,8 @@ fun PriceDisplayScreen(
             BDWW_SEQUENCE_ID -> BDWW_DISPLAY_MS
             NEO_SEQUENCE_ID -> NEO_DISPLAY_MS
             FR_SEQUENCE_ID -> FR_DISPLAY_MS
+            ARROW_UP_SEQUENCE_ID -> ARROW_UP_DISPLAY_MS
+            ARROW_DOWN_SEQUENCE_ID -> ARROW_DOWN_DISPLAY_MS
             else -> 80L
         }
         delay(delayMs)
@@ -3237,6 +3287,8 @@ fun PriceDisplayScreen(
                     BDWW_SEQUENCE_ID -> BDWW_FRAMES
                     NEO_SEQUENCE_ID -> NEO_FRAMES
                     FR_SEQUENCE_ID -> FR_FRAMES
+                    ARROW_UP_SEQUENCE_ID -> ARROW_UP_FRAMES
+                    ARROW_DOWN_SEQUENCE_ID -> ARROW_DOWN_FRAMES
                     else -> emptyList()
                 }
                 val topOffsetFraction = when (spawn.sequenceId) {
@@ -3244,6 +3296,8 @@ fun PriceDisplayScreen(
                     BDWW_SEQUENCE_ID -> BDWW_TOP_OFFSET_FRACTION
                     NEO_SEQUENCE_ID -> NEO_TOP_OFFSET_FRACTION
                     FR_SEQUENCE_ID -> FR_TOP_OFFSET_FRACTION
+                    ARROW_UP_SEQUENCE_ID -> ARROW_UP_TOP_OFFSET_FRACTION
+                    ARROW_DOWN_SEQUENCE_ID -> ARROW_DOWN_TOP_OFFSET_FRACTION
                     else -> 0.22f
                 }
                 val aspectHeightPerWidth = when (spawn.sequenceId) {
@@ -3251,6 +3305,8 @@ fun PriceDisplayScreen(
                     BDWW_SEQUENCE_ID -> BDWW_ASPECT_HEIGHT_PER_WIDTH
                     NEO_SEQUENCE_ID -> NEO_ASPECT_HEIGHT_PER_WIDTH
                     FR_SEQUENCE_ID -> FR_ASPECT_HEIGHT_PER_WIDTH
+                    ARROW_UP_SEQUENCE_ID -> ARROW_UP_ASPECT_HEIGHT_PER_WIDTH
+                    ARROW_DOWN_SEQUENCE_ID -> ARROW_DOWN_ASPECT_HEIGHT_PER_WIDTH
                     else -> 0.55f
                 }
                 val drawableId = frames.getOrNull(spawn.frameIndex)
