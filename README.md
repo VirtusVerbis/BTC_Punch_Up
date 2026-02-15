@@ -2,6 +2,12 @@
 
 A boxing-themed Android app that visualizes real-time Bitcoin markets: Satoshi (hero) vs Lizard (villain), driven by live price and order-book volume from Binance and Coinbase.
 
+Created using:
+Cursor AI (for code)
+Gemini AI (for sprites)
+ChatGPT AI (for images)
+Human Effort (AI Prompts, Sprite touch-ups)
+
 ## Features
 
 - **Real-time dual-exchange data** – WebSocket connections to Binance and Coinbase for live BTC price and buy/sell volume
