@@ -13,6 +13,10 @@ ChatGPT AI (for images)
 Human Effort (AI Prompts, Sprite touch-ups)
 
 
+<a href="https://www.youtube.com/watch?v=NpQ0VG9puxE" target="_blank"><img src="" 
+alt="Click to watch trailer" width="400" height="240" border="10" /></a>
+
+
 ## Features
 
 - **Real-time dual-exchange data** – WebSocket connections to Binance and Coinbase for live BTC price and buy/sell volume
