@@ -2,6 +2,23 @@
 
 A boxing-themed Android app that visualizes real-time Bitcoin markets: Satoshi (hero) vs Lizard (villain), driven by live price and order-book volume from Binance and Coinbase.
 
+Created using:
+
+Cursor AI (for code)
+
+Gemini AI (for sprites)
+
+ChatGPT AI (for images)
+
+Human Effort (AI Prompts, Sprite touch-ups)
+
+
+<a href="https://youtube.com/shorts/5xDRoNPNqA4?si=tBx9lo-1XWkJ8rqq" target="_blank"><img src="https://github.com/VirtusVerbis/BTC_Punch_Up/blob/main/app/src/main/res/drawable/btc_punchup_cover.png" 
+alt="Click to watch trailer" width="400" height="400" border="10" /></a>
+
+(Click image to see video)
+
+
 ## Features
 
 - **Real-time dual-exchange data** – WebSocket connections to Binance and Coinbase for live BTC price and buy/sell volume
