@@ -13,7 +13,7 @@ ChatGPT AI (for images)
 Human Effort (AI Prompts, Sprite touch-ups)
 
 
-<a href="https://www.youtube.com/watch?v=NpQ0VG9puxE" target="_blank"><img src="" 
+<a href="https://www.youtube.com/watch?v=NpQ0VG9puxE" target="_blank"><img src="https://github.com/VirtusVerbis/BTC_Punch_Up/blob/main/app/src/main/res/drawable/btc_punchup_cover.png" 
 alt="Click to watch trailer" width="400" height="240" border="10" /></a>
 
 
