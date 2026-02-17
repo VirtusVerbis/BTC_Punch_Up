@@ -1196,7 +1196,7 @@ fun SplashScreen(
 private const val VIDEO_OVERLAY_OFFSET_FROM_TOP_DP = 100f
 
 /** Delay before auto-spawning the first video (optional; for testing). Set to 0 to disable auto-spawn. */
-private const val VIDEO_OVERLAY_AUTO_SPAWN_DELAY_MS = 8000L
+private const val VIDEO_OVERLAY_AUTO_SPAWN_DELAY_MS = 15*60_000L//8000L
 
 /** Delay between spawns: after each despawn, wait this long then spawn next video (if WiFi). 15 min = 15 * 60 * 1000L. */
 private const val VIDEO_OVERLAY_SPAWN_INTERVAL_MS = 15*60_000L
