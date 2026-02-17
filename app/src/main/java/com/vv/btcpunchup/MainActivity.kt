@@ -74,13 +74,30 @@ import com.vv.btcpunchup.ui.BtcCandleChart
 import com.vv.btcpunchup.ui.PriceDisplay
 import com.vv.btcpunchup.ui.PulseDirection
 import com.vv.btcpunchup.ui.theme.MyAppTheme
-import kotlin.math.min
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.viewinterop.AndroidView
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.listeners.AbstractYouTubePlayerListener
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.options.IFramePlayerOptions
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import java.io.File
+import java.util.Random
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
 
 // Flag to enable/disable Binance and Coinbase logcat logs
 const val ENABLE_EXCHANGE_LOGS = false
@@ -107,7 +124,61 @@ const val SPLASH_FADE_OUT_MS = 300    // fade-out duration in ms
 const val TITLE_DISPLAY_MS = 3500L
 const val TITLE_FADE_OUT_MS = 300
 
+// --- Video overlay (second Composition, independent of game frame rate) ---
+/** Video set id for "We_Call_Them_Poor" (https://youtu.be/B5if2hthPCs). */
+const val VIDEO_SET_WE_CALL_THEM_POOR = "We_Call_Them_Poor"
+const val VIDEO_SET_2026_BTC_CRASH = "2026_BTC_Crash"
+const val VIDEO_SET_BATTLESHIP = "Battleship"
+const val VIDEO_SET_FORD_VS_FERRARI = "Ford_vs_Ferrari"
+const val VIDEO_SET_MATRIX = "Matrix"
+const val VIDEO_SET_INTERSTELLAR_SAYLOR = "Interstellar_Saylor"
+const val VIDEO_SET_NO_SECOND_BEST = "No_Second_Best"
+const val VIDEO_SET_SAYLOR_SIGH = "Saylor_Sigh"
+const val VIDEO_SET_SHOW_YOU_THE_DOOR = "Show_you_the_Door"
+const val VIDEO_SET_GET_ON_THE_ARK = "Get_on_the_Ark"
+const val VIDEO_SET_FIAT_SYSTEM = "Fiat_System"
 
+/** Map video set id to YouTube video ID (for android-youtube-player). */
+private val VIDEO_SET_TO_VIDEO_ID = mapOf(
+    VIDEO_SET_WE_CALL_THEM_POOR to "B5if2hthPCs",
+    VIDEO_SET_2026_BTC_CRASH to "NTpFZLDoxI0",
+    VIDEO_SET_BATTLESHIP to "z-YKKKLwtiw",
+    VIDEO_SET_FORD_VS_FERRARI to "FrAqyC3AuhA",
+    VIDEO_SET_MATRIX to "y1GKMmAcd2I",
+    VIDEO_SET_INTERSTELLAR_SAYLOR to "QhpyJSHx8LI",
+    VIDEO_SET_NO_SECOND_BEST to "wIhTGB3wqV0",
+    VIDEO_SET_SAYLOR_SIGH to "2VqIBmFxMKY",
+    VIDEO_SET_SHOW_YOU_THE_DOOR to "xc3VG9JZM6I",
+    VIDEO_SET_GET_ON_THE_ARK to "uYO5L88h26Y",
+    VIDEO_SET_FIAT_SYSTEM to "rztpVMqkdug"
+)
+
+/** Ordered list of video set IDs; shuffled at launch for session order. */
+private val VIDEO_OVERLAY_SET_IDS = listOf(
+    VIDEO_SET_WE_CALL_THEM_POOR,
+    VIDEO_SET_2026_BTC_CRASH,
+    VIDEO_SET_NO_SECOND_BEST,
+    VIDEO_SET_SAYLOR_SIGH
+  //  VIDEO_SET_BATTLESHIP,
+ //   VIDEO_SET_FORD_VS_FERRARI,
+ //   VIDEO_SET_MATRIX,
+ //   VIDEO_SET_INTERSTELLAR_SAYLOR,
+//    VIDEO_SET_SHOW_YOU_THE_DOOR,
+ //   VIDEO_SET_GET_ON_THE_ARK,
+ //   VIDEO_SET_FIAT_SYSTEM
+)
+fun videoSetIdToVideoId(videoSetId: String): String? = VIDEO_SET_TO_VIDEO_ID[videoSetId]
+
+/** True if the active network is WiFi (used to avoid spawning video on cellular). */
+private fun isWifiConnected(context: Context): Boolean {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+    val network = cm.activeNetwork ?: return false
+    val caps = cm.getNetworkCapabilities(network) ?: return false
+    return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+}
+
+data class VideoSpawn(val videoSetId: String)
+data class VideoOverlayState(val activeSpawn: VideoSpawn?, val soundEnabled: Boolean)
 
 // Satoshi sprite scale multiplier (adjustable for testing)
 const val SATOSHI_SCALE = 3.5f  // 1.0 = 100% size, 1.5 = 150% size, 0.5 = 50% size
@@ -872,6 +943,39 @@ class MainActivity : ComponentActivity() {
     private var lastPausedAtMs: Long? = null
     private var isInPipState: MutableState<Boolean>? = null
 
+    // Video overlay state (second Composition only; game never reads this)
+    private val _videoState = MutableStateFlow(VideoOverlayState(activeSpawn = null, soundEnabled = false))
+    val videoStateFlow: StateFlow<VideoOverlayState> = _videoState.asStateFlow()
+    private val shuffledVideoSetIds = VIDEO_OVERLAY_SET_IDS.shuffled(Random(System.currentTimeMillis()))
+    private var nextVideoSetIndex = 0
+    private val videoSetIdsWithPlaybackError = mutableSetOf<String>()
+
+    fun setVideoSpawn(spawn: VideoSpawn?) {
+        _videoState.value = _videoState.value.copy(activeSpawn = spawn)
+    }
+    fun clearVideoSpawn() {
+        _videoState.value = _videoState.value.copy(activeSpawn = null)
+    }
+    fun getNextVideoSetIdForOverlay(): String? {
+        if (shuffledVideoSetIds.isEmpty()) return null
+        val start = nextVideoSetIndex
+        do {
+            val id = shuffledVideoSetIds[nextVideoSetIndex]
+            nextVideoSetIndex = (nextVideoSetIndex + 1) % shuffledVideoSetIds.size
+            if (id !in videoSetIdsWithPlaybackError) return id
+        } while (nextVideoSetIndex != start)
+        return null
+    }
+    fun flagVideoSetIdAsErrored(videoSetId: String) {
+        videoSetIdsWithPlaybackError.add(videoSetId)
+    }
+    fun clearVideoErrorFlags() {
+        videoSetIdsWithPlaybackError.clear()
+    }
+    fun setVideoSoundEnabled(enabled: Boolean) {
+        _videoState.value = _videoState.value.copy(soundEnabled = enabled)
+    }
+
     @SuppressLint("UnusedBoxWithConstraintsScope")
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -930,31 +1034,48 @@ class MainActivity : ComponentActivity() {
                     val h = if (fullW > 0 && fullH > 0) fullH else fallbackH
                     val pipW = with(density) { maxWidth.roundToPx() }
                     val pipH = with(density) { maxHeight.roundToPx() }
-                    if (w > 0 && h > 0) min(pipW.toFloat() / w, pipH.toFloat() / h) else 1f
+                    if (w > 0 && h > 0) minOf(pipW.toFloat() / w, pipH.toFloat() / h) else 1f
                 } else 1f
                 Layout(
                     modifier = Modifier.fillMaxSize(),
                     content = {
-                        Box(
-                            modifier = Modifier.graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                                clip = isInPip
-                                if (isInPip) transformOrigin = TransformOrigin(0f, 0f)
-                            }
-                        ) {
-                            val (fullW, fullH) = rememberedFullSizePx
-                            val designWidthDp = if (fullW > 0 && fullH > 0) (fullW / density.density).toInt() else 360
-                            val designHeightDp = if (fullW > 0 && fullH > 0) (fullH / density.density).toInt() else 640
-                            val effectiveConfig = if (isInPip) {
-                                Configuration(LocalConfiguration.current).apply {
-                                    screenWidthDp = designWidthDp
-                                    screenHeightDp = designHeightDp
+                        // Outer Box: game layer (bottom) + video overlay (top); single measurable for Layout
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            // Game layer (unchanged; own composition/recomposition)
+                            Box(
+                                modifier = Modifier.graphicsLayer {
+                                    scaleX = scale
+                                    scaleY = scale
+                                    clip = isInPip
+                                    if (isInPip) transformOrigin = TransformOrigin(0f, 0f)
                                 }
-                            } else LocalConfiguration.current
-                            CompositionLocalProvider(LocalConfiguration provides effectiveConfig) {
-                                content()
+                            ) {
+                                val (fullW, fullH) = rememberedFullSizePx
+                                val designWidthDp = if (fullW > 0 && fullH > 0) (fullW / density.density).toInt() else 360
+                                val designHeightDp = if (fullW > 0 && fullH > 0) (fullH / density.density).toInt() else 640
+                                val effectiveConfig = if (isInPip) {
+                                    Configuration(LocalConfiguration.current).apply {
+                                        screenWidthDp = designWidthDp
+                                        screenHeightDp = designHeightDp
+                                    }
+                                } else LocalConfiguration.current
+                                CompositionLocalProvider(LocalConfiguration provides effectiveConfig) {
+                                    content()
+                                }
                             }
+                            // Video overlay: second Composition (own frame rate; never recomposed by game)
+                            AndroidView(
+                                factory = { ctx ->
+                                    ComposeView(ctx).apply {
+                                        setContent {
+                                            MyAppTheme {
+                                                VideoOverlay(activity = ctx as MainActivity)
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
                         }
                     }
                 ) { measurables, constraints ->
@@ -967,7 +1088,7 @@ class MainActivity : ComponentActivity() {
                         val placeable = measurables.first().measure(Constraints.fixed(w, h))
                         val pipW = with(density) { maxWidth.roundToPx() }
                         val pipH = with(density) { maxHeight.roundToPx() }
-                        val scalePx = if (w > 0 && h > 0) min(pipW.toFloat() / w, pipH.toFloat() / h) else 1f
+                        val scalePx = if (w > 0 && h > 0) minOf(pipW.toFloat() / w, pipH.toFloat() / h) else 1f
                         layout(pipW, pipH) {
                             placeable.place(
                                 ((pipW - w * scalePx) / 2).toInt(),
@@ -1067,6 +1188,110 @@ fun SplashScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = contentScale
             )
+        }
+    }
+}
+
+/** Y-offset from top of screen for the video overlay (dp). 0 = flush top. */
+private const val VIDEO_OVERLAY_OFFSET_FROM_TOP_DP = 100f
+
+/** Delay before auto-spawning the first video (optional; for testing). Set to 0 to disable auto-spawn. */
+private const val VIDEO_OVERLAY_AUTO_SPAWN_DELAY_MS = 8000L
+
+/** Delay between spawns: after each despawn, wait this long then spawn next video (if WiFi). 15 min = 15 * 60 * 1000L. */
+private const val VIDEO_OVERLAY_SPAWN_INTERVAL_MS = 15*60_000L
+
+/** Video overlay: second Composition only; reads videoStateFlow, hosts YouTubePlayerView. Game never touches this. */
+@Composable
+private fun VideoOverlay(activity: MainActivity) {
+    val context = LocalContext.current
+    val videoState by activity.videoStateFlow.collectAsState()
+    val spawn = videoState.activeSpawn
+    // Spawn loop: always running so it is not restarted when overlay clears (avoids re-applying initial delay).
+    LaunchedEffect(Unit) {
+        if (VIDEO_OVERLAY_AUTO_SPAWN_DELAY_MS > 0L) delay(VIDEO_OVERLAY_AUTO_SPAWN_DELAY_MS)
+        while (true) {
+            if (!isWifiConnected(context)) {
+                delay(VIDEO_OVERLAY_SPAWN_INTERVAL_MS)
+                continue
+            }
+            val nextId = activity.getNextVideoSetIdForOverlay()
+            if (nextId == null) {
+                delay(VIDEO_OVERLAY_SPAWN_INTERVAL_MS)
+                continue
+            }
+            activity.setVideoSpawn(VideoSpawn(nextId))
+            activity.videoStateFlow.drop(1).filter { it.activeSpawn == null }.first()
+            delay(VIDEO_OVERLAY_SPAWN_INTERVAL_MS)
+        }
+    }
+    if (spawn == null) {
+        Box(modifier = Modifier.fillMaxSize())
+        return
+    }
+    val videoId = videoSetIdToVideoId(spawn.videoSetId)
+    if (videoId == null) {
+        LaunchedEffect(Unit) { activity.clearVideoSpawn() }
+        Box(modifier = Modifier.fillMaxSize())
+        return
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val viewRef = remember { mutableStateOf<YouTubePlayerView?>(null) }
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val topOffsetDp = VIDEO_OVERLAY_OFFSET_FROM_TOP_DP.dp
+        val visibleHeightDp = with(density) { (maxHeight.value * 0.4f).dp }
+        Column(modifier = Modifier.fillMaxSize()) {
+            Spacer(modifier = Modifier.height(topOffsetDp))
+            Box(modifier = Modifier.fillMaxWidth().height(visibleHeightDp)) {
+                AndroidView(
+                    factory = { ctx ->
+                        val playerOptions = IFramePlayerOptions.Builder()
+                            .origin("https://${ctx.packageName}")
+                            .controls(1)
+                            .build()
+                        YouTubePlayerView(ctx).apply {
+                            viewRef.value = this
+                            enableAutomaticInitialization = false
+                            lifecycleOwner.lifecycle.addObserver(this)
+                            initialize(object : AbstractYouTubePlayerListener() {
+                                override fun onReady(youTubePlayer: YouTubePlayer) {
+                                    youTubePlayer.loadVideo(videoId, 0f)
+                                    if (!activity.videoStateFlow.value.soundEnabled) youTubePlayer.mute()
+                                }
+                                override fun onStateChange(
+                                    youTubePlayer: YouTubePlayer,
+                                    state: PlayerConstants.PlayerState
+                                ) {
+                                    if (state == PlayerConstants.PlayerState.ENDED) activity.clearVideoSpawn()
+                                }
+                                override fun onError(
+                                    youTubePlayer: YouTubePlayer,
+                                    error: PlayerConstants.PlayerError
+                                ) {
+                                    activity.flagVideoSetIdAsErrored(spawn.videoSetId)
+                                    activity.clearVideoSpawn()
+                                }
+                            }, true, playerOptions)
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    update = { view ->
+                        view.getYouTubePlayerWhenReady(object : com.pierfrancescosoffritti.androidyoutubeplayer.core.player.listeners.YouTubePlayerCallback {
+                            override fun onYouTubePlayer(youTubePlayer: YouTubePlayer) {
+                                if (activity.videoStateFlow.value.soundEnabled) youTubePlayer.unMute()
+                                else youTubePlayer.mute()
+                            }
+                        })
+                    }
+                )
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            viewRef.value?.release()
+            viewRef.value = null
         }
     }
 }
@@ -3261,6 +3486,7 @@ fun PriceDisplayScreen(
         state = gameState,
         onScreenSize = { screenSizeForSpawn = it },
         onTimeLabelClick = {
+            (context as? MainActivity)?.clearVideoErrorFlags()
             showCenterGuides = !showCenterGuides
             if (showCenterGuides) {
                 alignmentSatoshiBiasPx = savedSatoshiBiasPx ?: (SATOSHI_CENTER_BIAS_DP * density)
