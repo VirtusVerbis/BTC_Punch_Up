@@ -3203,18 +3203,206 @@ fun PriceDisplayScreen(
         }
     }
     
+    val gameState = GameScreenContentState(
+        screenSizeForSpawn = screenSizeForSpawn,
+        density = density,
+        bg2Visible = bg2Visible,
+        backgroundFrameIndices = backgroundFrameIndices,
+        candleData = candleData,
+        signSpawns = signSpawns,
+        flashSpawns = flashSpawns,
+        audienceFlashUntilMs = audienceFlashUntilMs,
+        satoshiKOPhase = satoshiKOPhase,
+        lizardKOPhase = lizardKOPhase,
+        activeMemeSpawn = activeMemeSpawn,
+        movementOffsetX = movementOffsetX,
+        movementOffsetY = movementOffsetY,
+        togetherOffsetX = togetherOffsetX,
+        showCenterGuides = showCenterGuides,
+        savedSatoshiBiasPx = savedSatoshiBiasPx,
+        savedLizardBiasPx = savedLizardBiasPx,
+        alignmentSatoshiBiasPx = alignmentSatoshiBiasPx,
+        alignmentLizardBiasPx = alignmentLizardBiasPx,
+        alignmentDragInTopHalf = alignmentDragInTopHalf,
+        sprites = sprites,
+        satoshiInDamage = satoshiInDamage,
+        satoshiDamageType = satoshiDamageType,
+        lizardInDamage = lizardInDamage,
+        lizardDamageType = lizardDamageType,
+        blockHeight = blockHeight,
+        blockHeightFlashOn = blockHeightFlashOn,
+        lastBlockHeightUpdateTimeMs = lastBlockHeightUpdateTimeMs,
+        timerOverTenMinFlashOn = timerOverTenMinFlashOn,
+        savedFlashVisibleUntilMs = savedFlashVisibleUntilMs,
+        savedFlashOn = savedFlashOn,
+        binancePrice = binancePrice,
+        coinbasePrice = coinbasePrice,
+        binanceIsConnected = binanceIsConnected,
+        coinbaseIsConnected = coinbaseIsConnected,
+        binancePreviousPrice = binancePreviousPrice,
+        coinbasePreviousPrice = coinbasePreviousPrice,
+        binanceBuyVolume = binanceBuyVolume,
+        binanceSellVolume = binanceSellVolume,
+        coinbaseBuyVolume = coinbaseBuyVolume,
+        coinbaseSellVolume = coinbaseSellVolume,
+        maxVolume = maxVolume,
+        binanceVolumeAnimating = binanceVolumeAnimating,
+        coinbaseVolumeAnimating = coinbaseVolumeAnimating,
+        isBinanceDefense = isBinanceDefense,
+        isCoinbaseDefense = isCoinbaseDefense,
+        satoshiDamagePoints = satoshiDamagePoints,
+        lizardDamagePoints = lizardDamagePoints,
+        satoshiKOCount = satoshiKOCount,
+        lizardKOCount = lizardKOCount,
+        dcbFrames = dcbFrames,
+        context = context
+    )
+    GameScreenContent(
+        state = gameState,
+        onScreenSize = { screenSizeForSpawn = it },
+        onTimeLabelClick = {
+            showCenterGuides = !showCenterGuides
+            if (showCenterGuides) {
+                alignmentSatoshiBiasPx = savedSatoshiBiasPx ?: (SATOSHI_CENTER_BIAS_DP * density)
+                alignmentLizardBiasPx = savedLizardBiasPx ?: (LIZARD_CENTER_BIAS_DP * density)
+                alignmentModifiedThisSession = false
+            } else {
+                if (alignmentModifiedThisSession) {
+                    context.getSharedPreferences("boxer_alignment", Context.MODE_PRIVATE).edit()
+                        .putFloat("satoshi_center_bias_px", alignmentSatoshiBiasPx)
+                        .putFloat("lizard_center_bias_px", alignmentLizardBiasPx)
+                        .apply()
+                    savedSatoshiBiasPx = alignmentSatoshiBiasPx
+                    savedLizardBiasPx = alignmentLizardBiasPx
+                    savedFlashOn = true
+                    savedFlashVisibleUntilMs = System.currentTimeMillis() + ALIGNMENT_SAVED_FLASH_MS
+                }
+            }
+        },
+        onAlignmentDragStart = { alignmentDragInTopHalf = it },
+        onAlignmentDrag = { topHalf, dx ->
+            if (topHalf) alignmentLizardBiasPx += dx else alignmentSatoshiBiasPx += dx
+            alignmentModifiedThisSession = true
+        },
+        onPlayOnceComplete = playOnceComplete@ { spriteType ->
+            if (spriteType == SpriteType.SATOSHI && satoshiKOPhase != null) return@playOnceComplete
+            if (spriteType == SpriteType.LIZARD && lizardKOPhase != null) return@playOnceComplete
+            if (spriteType == SpriteType.SATOSHI && satoshiInDamage) {
+                val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
+                if (satoshiSprite != null) {
+                    val idx = sprites.indexOf(satoshiSprite)
+                    sprites[idx] = satoshiSprite.copy(
+                        animationFrames = SATOSHI_IDLE_FRAMES,
+                        currentFrameIndex = 0, isAnimated = true,
+                        currentPunchType = null, currentHandSide = null, isPunching = false,
+                        currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                        sizeScale = SATOSHI_SCALE
+                    )
+                }
+                satoshiInDamage = false
+                satoshiDamageType = null
+                if (DAMAGE_DEBUG) {
+                    Log.d("DamageDebug", "{\"h\":\"A\",\"loc\":\"damage_completion_cleared\",\"ts\":${System.currentTimeMillis()}}")
+                }
+                agentLog("MainActivity:DamageCompletion", "satoshi_cleared", "{\"ts\":${System.currentTimeMillis()}}", "D")
+            }
+            if (spriteType == SpriteType.LIZARD && lizardInDamage) {
+                val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD }
+                if (lizardSprite != null) {
+                    val idx = sprites.indexOf(lizardSprite)
+                    sprites[idx] = lizardSprite.copy(
+                        animationFrames = LIZARD_IDLE_FRAMES,
+                        currentFrameIndex = 0, isAnimated = true,
+                        currentPunchType = null, currentHandSide = null, isPunching = false,
+                        currentDefenseType = null, isDefending = false, playAnimationOnce = false,
+                        sizeScale = LIZARD_SCALE
+                    )
+                }
+                val wasBodyType = lizardDamageType == DamageAnimationType.LEFT_DAMAGE_BODY || lizardDamageType == DamageAnimationType.RIGHT_DAMAGE_BODY
+                lizardInDamage = false
+                lizardDamageType = null
+                if (wasBodyType) agentLog("MainActivity:LizardDamageCompletion", "lizard_body_cleared", "{\"ts\":${System.currentTimeMillis()}}", "H2")
+            }
+        }
+    )
+}
+
+/** Snapshot of state passed to GameScreenContent to avoid method size limit in PriceDisplayScreen. */
+private data class GameScreenContentState(
+    val screenSizeForSpawn: Size,
+    val density: Float,
+    val bg2Visible: Boolean,
+    val backgroundFrameIndices: List<Int>,
+    val candleData: List<com.vv.btcpunchup.data.Candle>,
+    val signSpawns: List<BtcSignSpawn>,
+    val flashSpawns: List<FlashSpawn>,
+    val audienceFlashUntilMs: Long,
+    val satoshiKOPhase: KOPhase?,
+    val lizardKOPhase: KOPhase?,
+    val activeMemeSpawn: MemeSpawn?,
+    val movementOffsetX: Float,
+    val movementOffsetY: Float,
+    val togetherOffsetX: Float,
+    val showCenterGuides: Boolean,
+    val savedSatoshiBiasPx: Float?,
+    val savedLizardBiasPx: Float?,
+    val alignmentSatoshiBiasPx: Float,
+    val alignmentLizardBiasPx: Float,
+    val alignmentDragInTopHalf: Boolean,
+    val sprites: List<SpriteData>,
+    val satoshiInDamage: Boolean,
+    val satoshiDamageType: DamageAnimationType?,
+    val lizardInDamage: Boolean,
+    val lizardDamageType: DamageAnimationType?,
+    val blockHeight: Int?,
+    val blockHeightFlashOn: Boolean,
+    val lastBlockHeightUpdateTimeMs: Long?,
+    val timerOverTenMinFlashOn: Boolean,
+    val savedFlashVisibleUntilMs: Long,
+    val savedFlashOn: Boolean,
+    val binancePrice: Double?,
+    val coinbasePrice: Double?,
+    val binanceIsConnected: Boolean,
+    val coinbaseIsConnected: Boolean,
+    val binancePreviousPrice: Double?,
+    val coinbasePreviousPrice: Double?,
+    val binanceBuyVolume: Double?,
+    val binanceSellVolume: Double?,
+    val coinbaseBuyVolume: Double?,
+    val coinbaseSellVolume: Double?,
+    val maxVolume: Double,
+    val binanceVolumeAnimating: Boolean,
+    val coinbaseVolumeAnimating: Boolean,
+    val isBinanceDefense: Boolean,
+    val isCoinbaseDefense: Boolean,
+    val satoshiDamagePoints: Int,
+    val lizardDamagePoints: Int,
+    val satoshiKOCount: Int,
+    val lizardKOCount: Int,
+    val dcbFrames: List<Int>,
+    val context: Context
+)
+
+@Composable
+private fun GameScreenContent(
+    state: GameScreenContentState,
+    onScreenSize: (Size) -> Unit,
+    onTimeLabelClick: () -> Unit,
+    onAlignmentDragStart: (Boolean) -> Unit,
+    onAlignmentDrag: (Boolean, Float) -> Unit,
+    onPlayOnceComplete: (SpriteType) -> Unit
+) {
+    val s = state
+    var lastAlignmentDragTopHalf by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .onGloballyPositioned { coordinates ->
-                screenSizeForSpawn = coordinates.size.toSize()
-                // #region agent log
-                agentLog("Box:onGloballyPositioned", "screen_size", "{\"width\":${screenSizeForSpawn.width},\"height\":${screenSizeForSpawn.height},\"halfWidth\":${screenSizeForSpawn.width / 2f}}", "H3")
-                // #endregion
+                onScreenSize(coordinates.size.toSize())
+                agentLog("Box:onGloballyPositioned", "screen_size", "{\"width\":${s.screenSizeForSpawn.width},\"height\":${s.screenSizeForSpawn.height},\"halfWidth\":${s.screenSizeForSpawn.width / 2f}}", "H3")
             }
     ) {
-        // Background: when chart visible draw bg1 (chart) + bg0 (ring); else draw bg5, bg4, bg3, bg2, bg0 (ring)
-        if (bg2Visible) {
+        if (s.bg2Visible) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Spacer(modifier = Modifier.fillMaxHeight(BG2_CHART_TOP_OFFSET_FRACTION))
                 Box(
@@ -3222,12 +3410,12 @@ fun PriceDisplayScreen(
                         .fillMaxWidth()
                         .fillMaxHeight(BG2_CHART_HEIGHT_FRACTION)
                 ) {
-                    BtcCandleChart(candles = candleData, showAxisLabels = BG2_SHOW_AXIS_LABELS)
+                    BtcCandleChart(candles = s.candleData, showAxisLabels = BG2_SHOW_AXIS_LABELS)
                 }
                 Spacer(modifier = Modifier.fillMaxHeight(1f - BG2_CHART_TOP_OFFSET_FRACTION - BG2_CHART_HEIGHT_FRACTION))
             }
             if (RING_FRAMES.isNotEmpty()) {
-                val idx = backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, RING_FRAMES.size - 1)
+                val idx = s.backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, RING_FRAMES.size - 1)
                 Image(
                     painter = painterResource(RING_FRAMES[idx]),
                     contentDescription = "Ring",
@@ -3238,8 +3426,8 @@ fun PriceDisplayScreen(
             }
         } else {
             if (AUDIENCE_FRAMES_BY_RING.isNotEmpty()) {
-                val ringIdx = backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, AUDIENCE_FRAMES_BY_RING.size - 1)
-                val audienceIdx = backgroundFrameIndices.getOrElse(2) { 0 } % 3
+                val ringIdx = s.backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, AUDIENCE_FRAMES_BY_RING.size - 1)
+                val audienceIdx = s.backgroundFrameIndices.getOrElse(2) { 0 } % 3
                 val drawableId = AUDIENCE_FRAMES_BY_RING.getOrNull(ringIdx)?.getOrNull(audienceIdx)
                 if (drawableId != null) {
                     Image(
@@ -3251,9 +3439,8 @@ fun PriceDisplayScreen(
                     )
                 }
             }
-            // bg4 signs: draw each spawn (0->1->2->Kill)
-            val signSizePx = (SIGN_SIZE_DP * density).toFloat()
-            signSpawns.forEach { sign ->
+            val signSizePx = (SIGN_SIZE_DP * s.density).toFloat()
+            s.signSpawns.forEach { sign ->
                 key(sign.id) {
                     val drawableId = BUY_BTC_SIGN_FRAMES.getOrNull(sign.frameIndex) ?: return@forEach
                     Image(
@@ -3270,11 +3457,10 @@ fun PriceDisplayScreen(
                     )
                 }
             }
-            // bg3 flash: draw spawns and full-screen audience flash when active (knockdown)
-            val flashActiveDraw = satoshiKOPhase == KOPhase.KNOCKED_DOWN || lizardKOPhase == KOPhase.KNOCKED_DOWN
+            val flashActiveDraw = s.satoshiKOPhase == KOPhase.KNOCKED_DOWN || s.lizardKOPhase == KOPhase.KNOCKED_DOWN
             if (flashActiveDraw && BG3_FLASH_FRAMES.size >= 4) {
                 val flashHalfPx = 32f
-                flashSpawns.forEach { spawn ->
+                s.flashSpawns.forEach { spawn ->
                     key(spawn.id) {
                         val drawableId = BG3_FLASH_FRAMES.getOrNull(spawn.frameIndex) ?: return@forEach
                         Image(
@@ -3291,7 +3477,7 @@ fun PriceDisplayScreen(
                         )
                     }
                 }
-                if (System.currentTimeMillis() < audienceFlashUntilMs) {
+                if (System.currentTimeMillis() < s.audienceFlashUntilMs) {
                     Image(
                         painter = painterResource(FLASH_AUDIENCE_DRAWABLE),
                         contentDescription = null,
@@ -3301,10 +3487,9 @@ fun PriceDisplayScreen(
                     )
                 }
             }
-            // bg2 memes: one active sequence at a time; scale to fit width, keep aspect ratio
-            activeMemeSpawn?.let { spawn ->
+            s.activeMemeSpawn?.let { spawn ->
                 val frames = when (spawn.sequenceId) {
-                    DCB_SEQUENCE_ID -> dcbFrames
+                    DCB_SEQUENCE_ID -> s.dcbFrames
                     BDWW_SEQUENCE_ID -> BDWW_FRAMES
                     NEO_SEQUENCE_ID -> NEO_FRAMES
                     FR_SEQUENCE_ID -> FR_FRAMES
@@ -3336,15 +3521,15 @@ fun PriceDisplayScreen(
                         painter = painterResource(drawableId),
                         contentDescription = null,
                         modifier = Modifier
-                            .offset { IntOffset(0, (screenSizeForSpawn.height * topOffsetFraction).toInt()) }
+                            .offset { IntOffset(0, (s.screenSizeForSpawn.height * topOffsetFraction).toInt()) }
                             .fillMaxWidth()
-                            .height((screenSizeForSpawn.width * aspectHeightPerWidth / density).dp),
+                            .height((s.screenSizeForSpawn.width * aspectHeightPerWidth / s.density).dp),
                         contentScale = ContentScale.Fit
                     )
                 }
             }
             if (RING_FRAMES.isNotEmpty()) {
-                val idx = backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, RING_FRAMES.size - 1)
+                val idx = s.backgroundFrameIndices.getOrElse(0) { 0 }.coerceIn(0, RING_FRAMES.size - 1)
                 Image(
                     painter = painterResource(RING_FRAMES[idx]),
                     contentDescription = "Ring",
@@ -3354,22 +3539,21 @@ fun PriceDisplayScreen(
                 )
             }
         }
-        // Render sprites in layer order (1=Lizard, 2=Satoshi, 3=Cat)
         val rangeY = BOBBING_MAX_Y_DOWN - BOBBING_MAX_Y_UP
-        val tY = if (rangeY != 0f) (movementOffsetY - BOBBING_MAX_Y_UP) / rangeY else 0.5f
-        val defaultSatoshiBiasPx = SATOSHI_CENTER_BIAS_DP * density
-        val defaultLizardBiasPx = LIZARD_CENTER_BIAS_DP * density
-        val effectiveSatoshiBiasPx = if (showCenterGuides) alignmentSatoshiBiasPx else (savedSatoshiBiasPx ?: defaultSatoshiBiasPx)
-        val effectiveLizardBiasPx = if (showCenterGuides) alignmentLizardBiasPx else (savedLizardBiasPx ?: defaultLizardBiasPx)
-        sprites.sortedBy { it.layer }.forEach { spriteData ->
+        val tY = if (rangeY != 0f) (s.movementOffsetY - BOBBING_MAX_Y_UP) / rangeY else 0.5f
+        val defaultSatoshiBiasPx = SATOSHI_CENTER_BIAS_DP * s.density
+        val defaultLizardBiasPx = LIZARD_CENTER_BIAS_DP * s.density
+        val effectiveSatoshiBiasPx = if (s.showCenterGuides) s.alignmentSatoshiBiasPx else (s.savedSatoshiBiasPx ?: defaultSatoshiBiasPx)
+        val effectiveLizardBiasPx = if (s.showCenterGuides) s.alignmentLizardBiasPx else (s.savedLizardBiasPx ?: defaultLizardBiasPx)
+        s.sprites.sortedBy { it.layer }.forEach { spriteData ->
             key(spriteData.spriteType) {
-                val xBobbingOffset = if (showCenterGuides) 0f else when (spriteData.spriteType) {
-                    SpriteType.SATOSHI -> movementOffsetX + togetherOffsetX
-                    SpriteType.LIZARD -> -movementOffsetX + togetherOffsetX
+                val xBobbingOffset = if (s.showCenterGuides) 0f else when (spriteData.spriteType) {
+                    SpriteType.SATOSHI -> s.movementOffsetX + s.togetherOffsetX
+                    SpriteType.LIZARD -> -s.movementOffsetX + s.togetherOffsetX
                     SpriteType.CAT -> 0f
                     else -> 0f
                 }
-                val yBobbingOffsetCat = if (spriteData.spriteType == SpriteType.CAT) 0f else movementOffsetY
+                val yBobbingOffsetCat = if (spriteData.spriteType == SpriteType.CAT) 0f else s.movementOffsetY
                 val depthForSprite = when (spriteData.spriteType) {
                     SpriteType.SATOSHI -> (1f - SCALE_SMALLER_PERCENT_SATOSHI / 100f) +
                         tY * ((1f + SCALE_LARGER_PERCENT_SATOSHI / 100f) - (1f - SCALE_SMALLER_PERCENT_SATOSHI / 100f))
@@ -3389,136 +3573,75 @@ fun PriceDisplayScreen(
                     depthScaleMultiplier = depthForSprite,
                     contentDescription = "Sprite",
                     opponentInKO = when (spriteData.spriteType) {
-                        SpriteType.SATOSHI -> lizardKOPhase != null
-                        SpriteType.LIZARD -> satoshiKOPhase != null
+                        SpriteType.SATOSHI -> s.lizardKOPhase != null
+                        SpriteType.LIZARD -> s.satoshiKOPhase != null
                         else -> false
                     },
                     centerBiasPxOverride = centerBiasOverride,
-                    animationsPaused = showCenterGuides,
+                    animationsPaused = s.showCenterGuides,
                     onPlayOnceComplete = callback@{ spriteType ->
-                        // KO sequence is driven by LaunchedEffect timers; ignore callback for KO to avoid double-advance
-                        if (spriteType == SpriteType.SATOSHI && satoshiKOPhase != null) return@callback
-                        if (spriteType == SpriteType.LIZARD && lizardKOPhase != null) return@callback
-                        // Normal damage clear
-                        if (spriteType == SpriteType.SATOSHI && satoshiInDamage) {
-                            val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
-                            if (satoshiSprite != null) {
-                                val idx = sprites.indexOf(satoshiSprite)
-                                sprites[idx] = satoshiSprite.copy(
-                                    animationFrames = SATOSHI_IDLE_FRAMES,
-                                    currentFrameIndex = 0, isAnimated = true,
-                                    currentPunchType = null, currentHandSide = null, isPunching = false,
-                                    currentDefenseType = null, isDefending = false, playAnimationOnce = false,
-                                    sizeScale = SATOSHI_SCALE
-                                )
-                            }
-                            satoshiInDamage = false
-                            satoshiDamageType = null
-                            if (DAMAGE_DEBUG) {
-                                Log.d("DamageDebug", "{\"h\":\"A\",\"loc\":\"damage_completion_cleared\",\"ts\":${System.currentTimeMillis()}}")
-                            }
-                            agentLog("MainActivity:DamageCompletion", "satoshi_cleared", "{\"ts\":${System.currentTimeMillis()}}", "D")
-                        }
-                        if (spriteType == SpriteType.LIZARD && lizardInDamage) {
-                            val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD }
-                            if (lizardSprite != null) {
-                                val idx = sprites.indexOf(lizardSprite)
-                                sprites[idx] = lizardSprite.copy(
-                                    animationFrames = LIZARD_IDLE_FRAMES,
-                                    currentFrameIndex = 0, isAnimated = true,
-                                    currentPunchType = null, currentHandSide = null, isPunching = false,
-                                    currentDefenseType = null, isDefending = false, playAnimationOnce = false,
-                                    sizeScale = LIZARD_SCALE
-                                )
-                            }
-                            val wasBodyType = lizardDamageType == DamageAnimationType.LEFT_DAMAGE_BODY || lizardDamageType == DamageAnimationType.RIGHT_DAMAGE_BODY
-                            lizardInDamage = false
-                            lizardDamageType = null
-                            if (wasBodyType) agentLog("MainActivity:LizardDamageCompletion", "lizard_body_cleared", "{\"ts\":${System.currentTimeMillis()}}", "H2")
-                        }
+                        if (spriteType == SpriteType.SATOSHI && s.satoshiKOPhase != null) return@callback
+                        if (spriteType == SpriteType.LIZARD && s.lizardKOPhase != null) return@callback
+                        onPlayOnceComplete(spriteType)
                     }
                 )
             }
         }
-
-        // Center alignment guides overlay (for debugging): vertical and horizontal blue lines through screen center
-        if (showCenterGuides && screenSizeForSpawn.width > 0f && screenSizeForSpawn.height > 0f) {
+        if (s.showCenterGuides && s.screenSizeForSpawn.width > 0f && s.screenSizeForSpawn.height > 0f) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val centerX = size.width / 2f
                 val centerY = size.height / 2f
                 val strokeWidth = 2.dp.toPx()
                 val blue = Color(0xFF0000FF)
-
-                // Vertical line
-                drawLine(
-                    color = blue,
-                    start = Offset(centerX, 0f),
-                    end = Offset(centerX, size.height),
-                    strokeWidth = strokeWidth
-                )
-                // Horizontal line
-                drawLine(
-                    color = blue,
-                    start = Offset(0f, centerY),
-                    end = Offset(size.width, centerY),
-                    strokeWidth = strokeWidth
-                )
+                drawLine(blue, Offset(centerX, 0f), Offset(centerX, size.height), strokeWidth)
+                drawLine(blue, Offset(0f, centerY), Offset(size.width, centerY), strokeWidth)
             }
-            // Boxer crosshairs: Satoshi orange, Lizard green (at image center = position - bias per user); full-screen lines
-            val satoshiSprite = sprites.find { it.spriteType == SpriteType.SATOSHI }
-            val lizardSprite = sprites.find { it.spriteType == SpriteType.LIZARD }
+            val satoshiSprite = s.sprites.find { it.spriteType == SpriteType.SATOSHI }
+            val lizardSprite = s.sprites.find { it.spriteType == SpriteType.LIZARD }
             if (satoshiSprite != null || lizardSprite != null) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val strokeWidth = 2.dp.toPx()
-                    satoshiSprite?.let { s ->
-                        val cx = s.spriteState.position.x + effectiveSatoshiBiasPx + SATOSHI_CROSSHAIR_X_OFFSET_DP.dp.toPx()
-                        val cy = s.spriteState.position.y
+                    satoshiSprite?.let { spr ->
+                        val cx = spr.spriteState.position.x + effectiveSatoshiBiasPx + SATOSHI_CROSSHAIR_X_OFFSET_DP.dp.toPx()
+                        val cy = spr.spriteState.position.y
                         val orange = Color(0xFFFF8C00)
                         drawLine(orange, Offset(cx, 0f), Offset(cx, size.height), strokeWidth)
                         drawLine(orange, Offset(0f, cy), Offset(size.width, cy), strokeWidth)
                     }
-                    lizardSprite?.let { s ->
-                        val cx = s.spriteState.position.x + effectiveLizardBiasPx + LIZARD_CROSSHAIR_X_OFFSET_DP.dp.toPx()
-                        val cy = s.spriteState.position.y
+                    lizardSprite?.let { spr ->
+                        val cx = spr.spriteState.position.x + effectiveLizardBiasPx + LIZARD_CROSSHAIR_X_OFFSET_DP.dp.toPx()
+                        val cy = spr.spriteState.position.y
                         val green = Color(0xFF00C853)
                         drawLine(green, Offset(cx, 0f), Offset(cx, size.height), strokeWidth)
                         drawLine(green, Offset(0f, cy), Offset(size.width, cy), strokeWidth)
                     }
                 }
             }
-            // Full-screen drag: top half = Lizard offset, bottom half = Satoshi offset
-            if (screenSizeForSpawn.height > 0f) {
-                val centerY = screenSizeForSpawn.height / 2f
+            if (s.screenSizeForSpawn.height > 0f) {
+                val centerY = s.screenSizeForSpawn.height / 2f
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(showCenterGuides) {
-                            if (!showCenterGuides) return@pointerInput
+                        .pointerInput(s.showCenterGuides) {
+                            if (!s.showCenterGuides) return@pointerInput
                             detectDragGestures(
-                                onDragStart = { offset -> alignmentDragInTopHalf = offset.y < centerY },
-                                onDrag = { _, dragAmount ->
-                                    if (alignmentDragInTopHalf) {
-                                        alignmentLizardBiasPx += dragAmount.x
-                                    } else {
-                                        alignmentSatoshiBiasPx += dragAmount.x
-                                    }
-                                    alignmentModifiedThisSession = true
-                                }
+                                onDragStart = { offset ->
+                                    lastAlignmentDragTopHalf = offset.y < centerY
+                                    onAlignmentDragStart(offset.y < centerY)
+                                },
+                                onDrag = { _, dragAmount -> onAlignmentDrag(lastAlignmentDragTopHalf, dragAmount.x) }
                             )
                         }
                 )
             }
         }
-        
-        // Price displays as overlays
-        // Center top - Time (block height) and elapsed since last update
         val screenHeightDp = LocalConfiguration.current.screenHeightDp
         val priceFontSize = (screenHeightDp / 20 * 0.4).sp
-        val blockHeightFontSize = (screenHeightDp / 20 * 0.8 * 0.9).sp  // 2× price font, reduced 10%
-        val koCounterFontSize = (blockHeightFontSize.value * 0.72f).sp  // 72% of block height (20% smaller than 90%)
-        val blockLabelFontSize = (blockHeightFontSize.value * 0.6 * 1.25 * 0.9).sp  // reduced 10%
-        val timerFontSize = (priceFontSize.value * 0.6 * 1.25).sp  // same as Offense/Defense labels
-        val elapsedMs = lastBlockHeightUpdateTimeMs?.let { System.currentTimeMillis() - it } ?: 0L
+        val blockHeightFontSize = (screenHeightDp / 20 * 0.8 * 0.9).sp
+        val koCounterFontSize = (blockHeightFontSize.value * 0.72f).sp
+        val blockLabelFontSize = (blockHeightFontSize.value * 0.6 * 1.25 * 0.9).sp
+        val timerFontSize = (priceFontSize.value * 0.6 * 1.25).sp
+        val elapsedMs = s.lastBlockHeightUpdateTimeMs?.let { System.currentTimeMillis() - it } ?: 0L
         val elapsedSeconds = (elapsedMs / 1000).toInt()
         val elapsedH = elapsedSeconds / 3600
         val elapsedM = (elapsedSeconds % 3600) / 60
@@ -3533,87 +3656,66 @@ fun PriceDisplayScreen(
             Text(
                 text = "Time",
                 fontSize = blockLabelFontSize,
-                color = Color(0xFFF7931A),  // Bitcoin orange
-                modifier = Modifier.clickable {
-                    showCenterGuides = !showCenterGuides
-                    if (showCenterGuides) {
-                        alignmentSatoshiBiasPx = savedSatoshiBiasPx ?: (SATOSHI_CENTER_BIAS_DP * density)
-                        alignmentLizardBiasPx = savedLizardBiasPx ?: (LIZARD_CENTER_BIAS_DP * density)
-                        alignmentModifiedThisSession = false
-                    } else {
-                        if (alignmentModifiedThisSession) {
-                            context.getSharedPreferences("boxer_alignment", Context.MODE_PRIVATE).edit()
-                                .putFloat("satoshi_center_bias_px", alignmentSatoshiBiasPx)
-                                .putFloat("lizard_center_bias_px", alignmentLizardBiasPx)
-                                .apply()
-                            savedSatoshiBiasPx = alignmentSatoshiBiasPx
-                            savedLizardBiasPx = alignmentLizardBiasPx
-                            savedFlashOn = true
-                            savedFlashVisibleUntilMs = System.currentTimeMillis() + ALIGNMENT_SAVED_FLASH_MS
-                        }
-                    }
-                }
+                color = Color(0xFFF7931A),
+                modifier = Modifier.clickable { onTimeLabelClick() }
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = blockHeight?.toString() ?: "—",
+                text = s.blockHeight?.toString() ?: "—",
                 fontSize = blockHeightFontSize,
-                color = if (blockHeightFlashOn) Color.White else Color(0xFFF7931A)  // Bitcoin orange, flash white on update
+                color = if (s.blockHeightFlashOn) Color.White else Color(0xFFF7931A)
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = elapsedString,
                 fontSize = timerFontSize,
-                color = if (elapsedMs >= TIMER_FLASH_WHEN_ELAPSED_MS && timerOverTenMinFlashOn) Color.White else Color(0xFFF7931A)
+                color = if (elapsedMs >= TIMER_FLASH_WHEN_ELAPSED_MS && s.timerOverTenMinFlashOn) Color.White else Color(0xFFF7931A)
             )
-            if (System.currentTimeMillis() < savedFlashVisibleUntilMs) {
+            if (System.currentTimeMillis() < s.savedFlashVisibleUntilMs) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Saved",
                     fontSize = koCounterFontSize,
                     fontWeight = FontWeight.Bold,
-                    color = if (savedFlashOn) Color.Red else Color.White
+                    color = if (s.savedFlashOn) Color.Red else Color.White
                 )
             }
         }
-        // Top left - Binance
         PriceDisplay(
             label = "Binance BTC-USDT",
-            price = binancePrice,
-            isConnected = binanceIsConnected,
-            previousPrice = binancePreviousPrice,
-            buyVolume = binanceBuyVolume,
-            sellVolume = binanceSellVolume,
-            maxVolume = maxVolume,
-            volumeAnimating = binanceVolumeAnimating,
-            modeLabel = if (isBinanceDefense) "Defense" else "Offense",
+            price = s.binancePrice,
+            isConnected = s.binanceIsConnected,
+            previousPrice = s.binancePreviousPrice,
+            buyVolume = s.binanceBuyVolume,
+            sellVolume = s.binanceSellVolume,
+            maxVolume = s.maxVolume,
+            volumeAnimating = s.binanceVolumeAnimating,
+            modeLabel = if (s.isBinanceDefense) "Defense" else "Offense",
             modifier = Modifier.align(Alignment.TopStart),
             pulseDirection = PulseDirection.LEFT_TO_RIGHT,
-            damagePoints = satoshiDamagePoints,
+            damagePoints = s.satoshiDamagePoints,
             showDamageBar = true,
             maxDamagePoints = MAX_DAMAGE_POINTS,
-            koCount = satoshiKOCount,
+            koCount = s.satoshiKOCount,
             koCounterFontSize = koCounterFontSize
         )
-        
-        // Top right - Coinbase
         PriceDisplay(
             label = "Coinbase BTC-USD",
-            price = coinbasePrice,
-            isConnected = coinbaseIsConnected,
-            previousPrice = coinbasePreviousPrice,
-            buyVolume = coinbaseBuyVolume,
-            sellVolume = coinbaseSellVolume,
-            maxVolume = maxVolume,
-            volumeAnimating = coinbaseVolumeAnimating,
-            modeLabel = if (isCoinbaseDefense) "Defense" else "Offense",
+            price = s.coinbasePrice,
+            isConnected = s.coinbaseIsConnected,
+            previousPrice = s.coinbasePreviousPrice,
+            buyVolume = s.coinbaseBuyVolume,
+            sellVolume = s.coinbaseSellVolume,
+            maxVolume = s.maxVolume,
+            volumeAnimating = s.coinbaseVolumeAnimating,
+            modeLabel = if (s.isCoinbaseDefense) "Defense" else "Offense",
             modifier = Modifier.align(Alignment.TopEnd),
             horizontalAlignment = Alignment.End,
             pulseDirection = PulseDirection.RIGHT_TO_LEFT,
-            damagePoints = lizardDamagePoints,
+            damagePoints = s.lizardDamagePoints,
             showDamageBar = true,
             maxDamagePoints = MAX_DAMAGE_POINTS,
-            koCount = lizardKOCount,
+            koCount = s.lizardKOCount,
             koCounterFontSize = koCounterFontSize
         )
     }
