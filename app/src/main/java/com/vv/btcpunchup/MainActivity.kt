@@ -137,6 +137,18 @@ const val VIDEO_SET_SAYLOR_SIGH = "Saylor_Sigh"
 const val VIDEO_SET_SHOW_YOU_THE_DOOR = "Show_you_the_Door"
 const val VIDEO_SET_GET_ON_THE_ARK = "Get_on_the_Ark"
 const val VIDEO_SET_FIAT_SYSTEM = "Fiat_System"
+/** Video set id for "Exit_Fiat_Enter_Bitcoin" (https://www.youtube.com/watch?v=nOh-7SzI6gM). */
+const val VIDEO_SET_EXIT_FIAT_ENTER_BITCOIN = "Exit_Fiat_Enter_Bitcoin"
+/** Video set id for "Bitcoin_Rap_Battle" (https://www.youtube.com/watch?v=JaMJi1_1tkA). */
+const val VIDEO_SET_BITCOIN_RAP_BATTLE = "Bitcoin_Rap_Battle"
+/** Video set id for "One_Chair" (https://www.youtube.com/watch?v=qjjNgW4bZm8). */
+const val VIDEO_SET_ONE_CHAIR = "One_Chair"
+/** Video set id for "Money_Money" (https://www.youtube.com/watch?v=82bSw5uAkBQ). */
+const val VIDEO_SET_MONEY_MONEY = "Money_Money"
+/** Video set id for "Welcome_Blockchain" (https://www.youtube.com/watch?v=YbzNJr26H-4). */
+const val VIDEO_SET_WELCOME_BLOCKCHAIN = "Welcome_Blockchain"
+/** Video set id for "Blockchain_Blood" (https://www.youtube.com/watch?v=SBhOcuNKeIE). */
+const val VIDEO_SET_BLOCKCHAIN_BLOOD = "Blockchain_Blood"
 
 /** Map video set id to YouTube video ID (for android-youtube-player). */
 private val VIDEO_SET_TO_VIDEO_ID = mapOf(
@@ -150,7 +162,13 @@ private val VIDEO_SET_TO_VIDEO_ID = mapOf(
     VIDEO_SET_SAYLOR_SIGH to "2VqIBmFxMKY",
     VIDEO_SET_SHOW_YOU_THE_DOOR to "xc3VG9JZM6I",
     VIDEO_SET_GET_ON_THE_ARK to "uYO5L88h26Y",
-    VIDEO_SET_FIAT_SYSTEM to "rztpVMqkdug"
+    VIDEO_SET_FIAT_SYSTEM to "rztpVMqkdug",
+    VIDEO_SET_EXIT_FIAT_ENTER_BITCOIN to "nOh-7SzI6gM",
+    VIDEO_SET_BITCOIN_RAP_BATTLE to "JaMJi1_1tkA",
+    VIDEO_SET_ONE_CHAIR to "qjjNgW4bZm8",
+    VIDEO_SET_MONEY_MONEY to "82bSw5uAkBQ",
+    VIDEO_SET_WELCOME_BLOCKCHAIN to "YbzNJr26H-4",
+    VIDEO_SET_BLOCKCHAIN_BLOOD to "SBhOcuNKeIE"
 )
 
 /** Ordered list of video set IDs; shuffled at launch for session order. */
@@ -158,7 +176,13 @@ private val VIDEO_OVERLAY_SET_IDS = listOf(
     VIDEO_SET_WE_CALL_THEM_POOR,
     VIDEO_SET_2026_BTC_CRASH,
     VIDEO_SET_NO_SECOND_BEST,
-    VIDEO_SET_SAYLOR_SIGH
+    VIDEO_SET_SAYLOR_SIGH,
+    VIDEO_SET_BITCOIN_RAP_BATTLE,
+    VIDEO_SET_ONE_CHAIR,
+    VIDEO_SET_MONEY_MONEY,
+    VIDEO_SET_WELCOME_BLOCKCHAIN,
+    VIDEO_SET_BLOCKCHAIN_BLOOD
+ //   VIDEO_SET_EXIT_FIAT_ENTER_BITCOIN,
   //  VIDEO_SET_BATTLESHIP,
  //   VIDEO_SET_FORD_VS_FERRARI,
  //   VIDEO_SET_MATRIX,
