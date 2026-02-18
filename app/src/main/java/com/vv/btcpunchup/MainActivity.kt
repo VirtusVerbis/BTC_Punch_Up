@@ -1039,17 +1039,19 @@ class MainActivity : ComponentActivity() {
                 Layout(
                     modifier = Modifier.fillMaxSize(),
                     content = {
-                        // Outer Box: game layer (bottom) + video overlay (top); single measurable for Layout
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            // Game layer (unchanged; own composition/recomposition)
-                            Box(
-                                modifier = Modifier.graphicsLayer {
+                        // Outer Box: game layer (bottom) + video overlay (top); single measurable for Layout; scale applied here so both layers included in PIP output
+                        Box(
+                            modifier = Modifier.fillMaxSize().then(
+                                if (isInPip) Modifier.graphicsLayer {
                                     scaleX = scale
                                     scaleY = scale
-                                    clip = isInPip
-                                    if (isInPip) transformOrigin = TransformOrigin(0f, 0f)
-                                }
-                            ) {
+                                    clip = true
+                                    transformOrigin = TransformOrigin(0f, 0f)
+                                } else Modifier
+                            )
+                        ) {
+                            // Game layer (unchanged; own composition/recomposition)
+                            Box() {
                                 val (fullW, fullH) = rememberedFullSizePx
                                 val designWidthDp = if (fullW > 0 && fullH > 0) (fullW / density.density).toInt() else 360
                                 val designHeightDp = if (fullW > 0 && fullH > 0) (fullH / density.density).toInt() else 640
@@ -1196,10 +1198,10 @@ fun SplashScreen(
 private const val VIDEO_OVERLAY_OFFSET_FROM_TOP_DP = 100f
 
 /** Delay before auto-spawning the first video (optional; for testing). Set to 0 to disable auto-spawn. */
-private const val VIDEO_OVERLAY_AUTO_SPAWN_DELAY_MS = 15*60_000L//8000L
+private const val VIDEO_OVERLAY_AUTO_SPAWN_DELAY_MS = 15 * 60_000L //8000L
 
 /** Delay between spawns: after each despawn, wait this long then spawn next video (if WiFi). 15 min = 15 * 60 * 1000L. */
-private const val VIDEO_OVERLAY_SPAWN_INTERVAL_MS = 15*60_000L
+private const val VIDEO_OVERLAY_SPAWN_INTERVAL_MS = 15 * 60_000L
 
 /** Video overlay: second Composition only; reads videoStateFlow, hosts YouTubePlayerView. Game never touches this. */
 @Composable
